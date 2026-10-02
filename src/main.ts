@@ -296,15 +296,15 @@ canvas.addEventListener('wheel', e => {
 const KEYS: Record<string, number> = { ArrowDown: 1, ArrowUp: -1, PageDown: 24, PageUp: -24 };
 window.addEventListener('keydown', e => {
   if (e.altKey || e.ctrlKey || e.metaKey || dragId !== null || sheet?.isOpen || list?.isOpen || goalForm?.isOpen) return;
-  if (e.target instanceof HTMLElement && e.target.closest('input, textarea, select, button')) return;
-  const t = performance.now();
   if (overview) {
-    // 回望时不移动视角；Esc 回到眼前
+    // 回望时不移动视角；Esc 回到眼前。点过“回望”后焦点还在那个按钮上，所以先于下面的过滤处理
     if (e.key !== 'Escape') return;
     setOverview(false);
     e.preventDefault();
     return;
   }
+  if (e.target instanceof HTMLElement && e.target.closest('input, textarea, select, button')) return;
+  const t = performance.now();
   if (e.key in KEYS) viewport.nudge(KEYS[e.key], t);
   else if (e.key === 'Home' || e.key === 'Escape') viewport.home(t);
   else return;

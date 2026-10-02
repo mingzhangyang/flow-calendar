@@ -173,15 +173,17 @@ export class ClimbWorld implements World {
   /** 回望的坐标：出发点在左下，山顶在右上，中间按时间均匀铺开、按海拔升高 */
   private ovMap() {
     const { W, H, fromH: sH } = this;
-    const dH = Math.max(this.summitH, sH + 24);
+    // 当天的目标从出发到截止可能只有几个小时；跨度至少按 1 小时算，免得除以零
+    const dH = this.summitH, span = Math.max(1, dH - sH);
     const aS = this.terrain.altAt(sH), aD = this.terrain.altAt(dH);
     const x0 = W * 0.12, x1 = W * 0.84;
     const yB = H * 0.74, yT = this.insetTop + H * 0.24;
-    const span = Math.max(1, aD - aS);
+    const rise = Math.max(1, aD - aS);
     return {
       sH, dH, aS, aD,
-      x: (h: number) => x0 + ((h - sH) / (dH - sH)) * (x1 - x0),
-      y: (a: number) => yB - ((a - aS) / span) * (yB - yT),
+      span,
+      x: (h: number) => x0 + ((h - sH) / span) * (x1 - x0),
+      y: (a: number) => yB - ((a - aS) / rise) * (yB - yT),
     };
   }
 
@@ -321,7 +323,7 @@ export class ClimbWorld implements World {
     const o = this.ovMap();
     const aN = this.terrain.altAt(nowH);
     const pct = Math.round(clamp((aN - o.aS) / Math.max(1, o.aD - o.aS), 0, 1) * 100);
-    const plan = o.aS + (o.aD - o.aS) * clamp((nowH - o.sH) / (o.dH - o.sH), 0, 1);
+    const plan = o.aS + (o.aD - o.aS) * clamp((nowH - o.sH) / o.span, 0, 1);
     const diff = Math.round(aN - plan);
     const pace = nowH < o.sH ? '还没出发'
       : nowH > o.dH ? '已经过了截止日'
@@ -927,7 +929,8 @@ export function summitOf(now: number, goal: Goal | null): Summit {
   if (goal) {
     const t = goal.title.length > 14 ? goal.title.slice(0, 13) + '…' : goal.title;
     // 以前设的目标没记出发时刻，就从那个月一号算起
-    const start = Math.min(goal.start ?? monthStart(now), goal.due - 86_400_000);
+    // 出发时刻照记下的来；只在它晚于截止（数据不对）时压到截止那一刻
+    const start = Math.min(goal.start ?? monthStart(now), goal.due);
     return { ms: goal.due, h: localHours(goal.due), label: t, goal: true, start };
   }
   const d = new Date(now);
