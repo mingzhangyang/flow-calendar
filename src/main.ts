@@ -255,7 +255,8 @@ canvas.addEventListener('pointerdown', e => {
   down = { x: e.clientX, y: e.clientY, t: performance.now(), moved: 0 };
   canvas.setPointerCapture(e.pointerId);
   canvas.classList.add('dragging');
-  viewport.grab(performance.now());
+  // 回望时视角正回到现在，不让拖动打断；点一下仍然能打开详情
+  if (!overview) viewport.grab(performance.now());
   requestRender();
 });
 
@@ -263,7 +264,7 @@ canvas.addEventListener('pointermove', e => {
   if (e.pointerId !== dragId) return;
   const x = localX(e), y = localY(e);
   down.moved = Math.max(down.moved, Math.hypot(e.clientX - down.x, e.clientY - down.y));
-  viewport.dragBy(world.dragHours(lastX, lastY, x - lastX, y - lastY), performance.now());
+  if (!overview) viewport.dragBy(world.dragHours(lastX, lastY, x - lastX, y - lastY), performance.now());
   lastX = x;
   lastY = y;
   requestRender();
@@ -273,7 +274,7 @@ function endDrag(e: PointerEvent) {
   if (e.pointerId !== dragId) return;
   dragId = null;
   canvas.classList.remove('dragging');
-  viewport.release(performance.now());
+  if (!overview) viewport.release(performance.now());
   requestRender();
   // 点一下光点：打开详情
   if (e.type === 'pointerup' && down.moved < 8 && performance.now() - down.t < 600) {
@@ -288,7 +289,7 @@ canvas.addEventListener('pointercancel', endDrag);
 
 canvas.addEventListener('wheel', e => {
   e.preventDefault();
-  if (dragId !== null) return;
+  if (dragId !== null || overview) return;
   // 滚轮按行或按页滚动时换成像素；往下滚、往右滚 = 往未来
   const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? canvas.clientHeight : 1;
   viewport.scrollBy(world.dragHours(localX(e), localY(e), -e.deltaX * unit, e.deltaY * unit), performance.now());

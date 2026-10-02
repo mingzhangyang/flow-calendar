@@ -263,11 +263,11 @@ export class ClimbWorld implements World {
     this.drawDayMarks(ctx, f.now, look);
     drawSilk(ctx, W, H, look);
     this.drawOverview(ctx, nowH, look);
-    this.drawSummit(ctx, summit, f.now, look);
     const reserved = this.drawClimber(ctx, f, nowH, look);
     this.hits = [];
     this.drawCamps(ctx, f.events, look, reserved);
-    // 山顶的旗最后放，点到它时优先于旁边的日程
+    // 山顶的旗最后画、最后放：压在旁边的日程上面，点到它时也优先
+    this.drawSummit(ctx, summit, f.now, look);
     if (this.summitHit) this.hits.push(this.summitHit);
   }
 
