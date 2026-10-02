@@ -291,7 +291,8 @@ export class Scenery {
     // 精灵图都加载好了就用画好的，否则用代码画的兜底；摆放完全一样
     const art = [...this.treeArt, ...this.grassArt, ...this.buffaloArt, this.sheepArt].every(s => s.ready);
 
-    const k0 = Math.floor((T - tau * 0.7 - 2) / SLOT), k1 = Math.ceil((T + tau * (FAR_Z - 1)) / SLOT);
+    // 小溪最长 12 小时，下游早已走过去了上游还看得见，所以往回多看一段
+    const k0 = Math.floor((T - tau * 0.7 - 14) / SLOT), k1 = Math.ceil((T + tau * (FAR_Z - 1)) / SLOT);
     for (let k = k0; k <= k1; k++) {
       for (const side of [-1, 1] as const) {
         const r = rng(k * 2 + (side > 0 ? 1 : 0) + 7_000_000);
@@ -300,16 +301,17 @@ export class Scenery {
         /** 路边一点：离路边 d（世界单位）、时刻 h */
         const at = (d: number, h: number) => project(edgeX(h, side) + side * (0.03 + d), h);
 
-        // 小溪：从远处的田野蜿蜒流到路边
-        if (r() < 0.05) {
-          const len = 1.5 + r() * 2.5, reach = 1.2 + r() * 1.3, wig = r() * 6, amp = 0.12 + r() * 0.15;
-          // 溪的中线（离路边距离 d，时刻 h），再往两边各让出半个溪宽，投影成一条带子
+        // 小溪：从远处的田野里弯弯曲曲地流过来，到路边为止。
+        // 主要顺着纵深走（几个小时那么长），横向只离开路边一点，透视下才像从远处流来，而不是横躺在田里
+        if (r() < 0.04) {
+          const len = 5 + r() * 7, reach = 0.5 + r() * 0.8, wig = r() * 6, amp = 0.12 + r() * 0.16;
+          // 溪的中线（离路边距离 d，时刻 h），再往两边各让出半个溪宽，投影成一条带子；u = 0 在路边，u = 1 是上游
           const mid: [number, number, number][] = [];
-          for (let i = 0; i <= 32; i++) {
-            const u = i / 32;
-            const d = 0.04 + u * reach + amp * Math.sin(u * 7 + wig) * u;
-            const h = h0 + u * len + 0.3 * Math.sin(u * 4.3 + wig * 1.7) * u;
-            mid.push([d, h, 0.028 * (1 - 0.65 * u)]); // 越往上游越窄
+          for (let i = 0; i <= 40; i++) {
+            const u = i / 40;
+            const d = -0.025 + reach * Math.sqrt(u) + amp * Math.sin(u * 5.5 + wig) * Math.min(1, u * 4);
+            const h = h0 + u * len + 0.25 * Math.sin(u * 5.3 + wig * 1.7) * u;
+            mid.push([d, h, 0.03 * (1 - 0.7 * u)]); // 越往上游越窄
           }
           const left: [number, number, number][] = [], right: [number, number, number][] = [];
           for (let i = 0; i < mid.length; i++) {
@@ -321,8 +323,13 @@ export class Scenery {
             left.push(at(d - th * w, h + (tx * w) / 0.3));
             right.push(at(d + th * w, h - (tx * w) / 0.3));
           }
-          const zNear = Math.min(...left.map(p => p[2]), ...right.map(p => p[2]));
-          if (zNear > 0.3) items.push([FLAT + left[0][2], () => stream(ctx, left, right, ink, water, fade)]);
+          // 下游已经走到身后的那一截剪掉，只画还在眼前的部分
+          let i0 = left.length;
+          while (i0 > 0 && left[i0 - 1][2] > 0.35 && right[i0 - 1][2] > 0.35) i0--;
+          if (left.length - i0 >= 2) {
+            const l = left.slice(i0), rr = right.slice(i0);
+            items.push([FLAT + l[0][2], () => stream(ctx, l, rr, ink, water, fade)]);
+          }
         }
 
         // 草地的淡墨晕染
@@ -507,22 +514,41 @@ function stream(
   ctx: CanvasRenderingContext2D, left: [number, number, number][], right: [number, number, number][],
   ink: RGB, water: RGB, fade: (z: number) => number,
 ) {
-  // 离“现在”线太近的一段会变得很粗，淡掉
-  const a = fade(left[left.length - 1][2]) * smooth(0.7, 1.3, left[0][2]);
-  if (a < 0.02) return;
+  // 每一段的浓淡：离“现在”线太近会变得很粗，淡掉；上游渐渐隐进田里；太远的淡进雾里
+  const n = left.length - 1;
+  const alpha = (i: number) => {
+    const z = Math.min(left[i][2], right[i][2]);
+    return fade(z) * smooth(0.7, 1.3, z) * smooth(n, n * 0.6, i);
+  };
+  if (alpha(0) < 0.02 && alpha(n >> 1) < 0.02) return;
+  // 水面用一道顺着溪的渐变填满，避免分段画出接缝
+  const [x0, y0] = left[0], [x1, y1] = left[n];
+  const dx = x1 - x0, dy = y1 - y0, len2 = dx * dx + dy * dy || 1;
+  const g = ctx.createLinearGradient(x0, y0, x1, y1);
+  let last = 0;
+  for (let i = 0; i <= n; i += 4) {
+    const t = Math.max(last, Math.min(1, ((left[i][0] - x0) * dx + (left[i][1] - y0) * dy) / len2));
+    last = t;
+    g.addColorStop(t, rgba(water, 0.75 * alpha(i)));
+  }
   ctx.beginPath();
   left.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
-  for (let i = right.length - 1; i >= 0; i--) ctx.lineTo(right[i][0], right[i][1]);
+  for (let i = n; i >= 0; i--) ctx.lineTo(right[i][0], right[i][1]);
   ctx.closePath();
-  ctx.fillStyle = rgba(water, 0.75 * a);
+  ctx.fillStyle = g;
   ctx.fill();
-  // 两岸各一道淡墨
-  ctx.strokeStyle = rgba(ink, 0.22 * a);
+  // 两岸各一道淡墨，一段一段画，跟着同样淡掉
   ctx.lineWidth = 0.8;
   for (const side of [left, right]) {
-    ctx.beginPath();
-    side.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
-    ctx.stroke();
+    for (let i = 1; i <= n; i++) {
+      const a = alpha(i);
+      if (a < 0.02) continue;
+      ctx.strokeStyle = rgba(ink, 0.22 * a);
+      ctx.beginPath();
+      ctx.moveTo(side[i - 1][0], side[i - 1][1]);
+      ctx.lineTo(side[i][0], side[i][1]);
+      ctx.stroke();
+    }
   }
 }
 
