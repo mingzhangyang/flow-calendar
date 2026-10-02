@@ -27,6 +27,8 @@ export interface EventView extends CalEvent {
 export interface Goal {
   title: string;
   due: number;
+  /** 什么时候出发（第一次设这个目标的时刻）；回望时从这里画起 */
+  start?: number;
 }
 
 /**

@@ -31,4 +31,13 @@ export interface World {
 
   /** 静止时多久需要重画一次，才能让时间的流动看起来连续 */
   idleRedrawMs(frame: Frame): number;
+
+  /**
+   * 拉远看全貌（登山的“回望”）。没有这个功能的世界不实现。
+   * instant：不要过渡，直接到位（系统开了“减少动态效果”时）。
+   */
+  setOverview?(on: boolean, instant: boolean): void;
+
+  /** 给读屏软件的补充说明（比如登山的目标和进度），接在通用说明后面 */
+  describe?(frame: Frame): string;
 }

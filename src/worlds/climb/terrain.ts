@@ -26,17 +26,21 @@ export class Terrain {
   private alt = new Float32Array(0);
   private key = '';
 
-  /** 按日程和现在算一遍（没变就跳过）。summitH 是山顶的时刻（本地小时） */
-  update(events: CalEvent[], now: number, summitH: number) {
+  /**
+   * 按日程和现在算一遍（没变就跳过）。summitH 是山顶的时刻，fromH 是出发的时刻（本地小时）：
+   * 平时往回算 9 天；回望要从出发那天画起，出发得更早就算得更早。
+   */
+  update(events: CalEvent[], now: number, summitH: number, fromH: number) {
     const day0 = Math.floor(localHours(now) / 24);
     let sig = 0;
     for (const e of events) sig = (sig * 31 + (e.start % 9_999_991) + 3 * (e.end % 9_999_991)) % 2_147_483_647;
-    const key = `${day0}|${summitH}|${events.length}|${sig}`;
+    const from = Math.min(day0 - 9, Math.floor(fromH / 24) - 1);
+    const key = `${day0}|${summitH}|${from}|${events.length}|${sig}`;
     if (key === this.key) return;
     this.key = key;
 
-    // 往回 9 天、往前 64 天：比视角能去的范围再多一点
-    const h0 = (day0 - 9) * 24, h1 = (day0 + 64) * 24;
+    // 往回 9 天（或到出发前一天）、往前 64 天：比视角能去的范围再多一点
+    const h0 = from * 24, h1 = (day0 + 64) * 24;
     const n = Math.round((h1 - h0) / STEP) + 1;
     this.h0 = h0;
     const raw = new Float32Array(n);

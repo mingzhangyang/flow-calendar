@@ -30,11 +30,19 @@ import { Terrain } from './terrain';
  * 再整体加一道越往右越陡的山势（往左则缓缓下去），远处的路就升进右上角的云里。
  *
  * 每个日程是路边一处营地（山亭），走过之后收起，留下一座石堆。
- * 越远的路藏进云里；山顶插一面旗，是截止日（这一步先放在月底）。
+ * 越远的路藏进云里；山顶插一面旗，是截止日。
+ *
+ * 回望：拉远看整座山。横向从出发那天到山顶均匀铺开，纵向直接按海拔：
+ * 出发点在左下，山顶在右上，一道虚线连起来是“匀速走的原定路线”，
+ * 走在虚线上面就是比原定快，下面就是慢。两种看法之间用一小段过渡连起来。
  */
 const P = 0.5;
 /** 海拔每升 1（忙一小时），画面上升多少（以横向一小时为单位）：1 就是 45° */
 const K = 1;
+/** 回望的过渡要多久（秒） */
+const OV_SEC = 0.8;
+/** 回望时，人和营地缩到多大 */
+const OV_SCALE = 0.5;
 
 interface Hit { id: string; x: number; y: number; w: number; h: number }
 
@@ -62,6 +70,12 @@ export class ClimbWorld implements World {
   private hits: Hit[] = [];
   /** 山顶的旗占的地方（连同上面的字），点一下设目标 */
   private summitHit: Hit | null = null;
+  /** 出发和山顶的时刻（本地小时） */
+  private fromH = 0; private summitH = 0;
+  /** 回望：ov 从 0（眼前）走到 1（全貌），e 是缓动后的值；ovT 是上一帧的时刻 */
+  private ov = 0; private ovTarget = 0; private ovT = 0; private e = 0;
+  /** 回望里写的几句话，也给读屏用 */
+  private stats: Stats | null = null;
 
   private art: {
     walk: Sprite; steep: Sprite; rest: Sprite; companion: Sprite;
@@ -121,7 +135,9 @@ export class ClimbWorld implements World {
     const { T, CX, CY, R, L, H } = this;
     const fw: number[] = [], bk: number[] = [];
     for (let h = T; h < T + 70 * 24; h += clamp((h - T) * 0.03, 0.05, 6)) fw.push(h);
-    for (let h = T - 0.05; h > T - 9 * 24; h -= clamp((T - h) * 0.03, 0.05, 6)) bk.push(h);
+    // 往回至少 9 天，回望时要从出发那天画起
+    const back = Math.max(9 * 24, T - this.fromH + 24);
+    for (let h = T - 0.05; h > T - back; h -= clamp((T - h) * 0.03, 0.05, 6)) bk.push(h);
     const hs = [...bk.reverse(), ...fw];
     const i0 = bk.length;
     const xs = hs.map(h => this.xAt(h));
@@ -143,7 +159,30 @@ export class ClimbWorld implements World {
       const top = this.insetTop + H * 0.13, m = H * 0.06;
       if (ys[i] < top + m) ys[i] = top + m * Math.exp((ys[i] - top - m) / m);
     }
+    // 回望：往全貌那头挪
+    if (this.e > 0) {
+      const o = this.ovMap(), e = this.e;
+      for (let i = 0; i < hs.length; i++) {
+        xs[i] += (o.x(hs[i]) - xs[i]) * e;
+        ys[i] += (o.y(alt[i]) - ys[i]) * e;
+      }
+    }
     this.rh = hs; this.rx = xs; this.ry = ys;
+  }
+
+  /** 回望的坐标：出发点在左下，山顶在右上，中间按时间均匀铺开、按海拔升高 */
+  private ovMap() {
+    const { W, H, fromH: sH } = this;
+    const dH = Math.max(this.summitH, sH + 24);
+    const aS = this.terrain.altAt(sH), aD = this.terrain.altAt(dH);
+    const x0 = W * 0.12, x1 = W * 0.84;
+    const yB = H * 0.74, yT = this.insetTop + H * 0.24;
+    const span = Math.max(1, aD - aS);
+    return {
+      sH, dH, aS, aD,
+      x: (h: number) => x0 + ((h - sH) / (dH - sH)) * (x1 - x0),
+      y: (a: number) => yB - ((a - aS) / span) * (yB - yT),
+    };
   }
 
   /** 时刻 h 的地面 → 屏幕坐标（在这一帧的山脊上查） */
@@ -185,7 +224,8 @@ export class ClimbWorld implements World {
   private scaleAt(h: number) {
     const dt = h - this.T;
     const k = dt >= 0 ? (1 + dt / this.tauR) ** (-P - 1) : (1 - dt / this.tauL) ** (-P - 1);
-    return clamp(Math.sqrt(k), 0, 1);
+    const close = clamp(Math.sqrt(k), 0, 1);
+    return close + (OV_SCALE - close) * this.e;
   }
 
   draw(ctx: CanvasRenderingContext2D, f: Frame) {
@@ -193,8 +233,12 @@ export class ClimbWorld implements World {
     this.T = localHours(f.view);
     const nowH = localHours(f.now);
     const summit = summitOf(f.now, f.goal);
-    this.terrain.update(f.events, f.now, summit.h);
+    this.fromH = localHours(summit.start);
+    this.summitH = summit.h;
+    this.terrain.update(f.events, f.now, summit.h, this.fromH);
+    this.stepOverview();
     this.buildRidge();
+    this.stats = this.measure(nowH, summit);
 
     const hod = mod(this.T, 24);
     const sky = skyAt(hod), night = nightAt(hod);
@@ -210,12 +254,13 @@ export class ClimbWorld implements World {
     this.drawBody(ctx, ridge, sky, look);
     this.drawSurface(ctx, ridge, look);
     this.drawPlants(ctx, look);
-    this.drawPast(ctx, ridge, sky, look);
+    this.drawPast(ctx, ridge, this.at(nowH)[0], sky, look);
     this.drawTrail(ctx, ridge, nowH, look);
     this.drawHills(ctx, sky, look);
     this.drawClouds(ctx, sky, look);
     this.drawDayMarks(ctx, f.now, look);
     drawSilk(ctx, W, H, look);
+    this.drawOverview(ctx, nowH, look);
     this.drawSummit(ctx, summit, f.now, look);
     const reserved = this.drawClimber(ctx, f, nowH, look);
     this.hits = [];
@@ -225,6 +270,8 @@ export class ClimbWorld implements World {
   }
 
   dragHours(x: number, _y: number, dx: number, dy: number): number {
+    // 回望时整座山都在眼前，不用拖
+    if (this.ovTarget) return 0;
     // 横着拖：让手指下的那一刻跟着手指走。x = CX + R(1 − u)，u = (1 + Δt/τ)^−P，
     // 所以 dΔt/dx = τ / (R·P) · u^(−1/P − 1)。离边缘太近时封顶，免得一下跳出好几周。
     const right = x >= this.CX;
@@ -243,7 +290,92 @@ export class ClimbWorld implements World {
     return null;
   }
 
-  isAnimating() { return false; }
+  isAnimating() { return this.ov !== this.ovTarget; }
+
+  setOverview(on: boolean, instant: boolean) {
+    this.ovTarget = on ? 1 : 0;
+    if (instant) this.ov = this.ovTarget;
+    this.ovT = performance.now();
+  }
+
+  describe(f: Frame): string {
+    let text = f.goal ? `目标：${f.goal.title}，${fmtDay(f.goal.due)}截止。` : '还没有设目标，山顶的旗先插在月底。';
+    text += '点山顶的旗可以设目标和截止日，左下角的“回望”可以拉远看整座山。';
+    if (this.ovTarget && this.stats) text += `正在回望：${this.stats.from}出发，已爬 ${this.stats.pct}%，${this.stats.pace}。`;
+    return text;
+  }
+
+  /** 回望的过渡往前走一帧 */
+  private stepOverview() {
+    const t = performance.now();
+    if (this.ov !== this.ovTarget) {
+      const d = Math.min(0.1, (t - this.ovT) / 1000) / OV_SEC;
+      this.ov = this.ov < this.ovTarget ? Math.min(this.ovTarget, this.ov + d) : Math.max(this.ovTarget, this.ov - d);
+    }
+    this.ovT = t;
+    this.e = this.ov * this.ov * (3 - 2 * this.ov);
+  }
+
+  /** 爬了多少、比匀速走的原定路线快还是慢 */
+  private measure(nowH: number, summit: Summit): Stats {
+    const o = this.ovMap();
+    const aN = this.terrain.altAt(nowH);
+    const pct = Math.round(clamp((aN - o.aS) / Math.max(1, o.aD - o.aS), 0, 1) * 100);
+    const plan = o.aS + (o.aD - o.aS) * clamp((nowH - o.sH) / (o.dH - o.sH), 0, 1);
+    const diff = Math.round(aN - plan);
+    const pace = nowH < o.sH ? '还没出发'
+      : nowH > o.dH ? '已经过了截止日'
+      : diff === 0 ? '正好走在原定路线上'
+      : diff > 0 ? `比原定路线快约 ${diff} 小时` : `比原定路线慢约 ${-diff} 小时`;
+    const d = new Date(summit.start);
+    return { from: `${d.getMonth() + 1}月${d.getDate()}日`, pct, pace };
+  }
+
+  /**
+   * 回望时的几笔标注：出发点、匀速走的原定路线（虚线）、左边一道竖线量出已经爬了多高，
+   * 人脚下写比原定快还是慢。只在拉远后淡淡出现。
+   */
+  private drawOverview(ctx: CanvasRenderingContext2D, nowH: number, look: Look) {
+    const a = smooth(0.55, 1, this.ov);
+    const s = this.stats;
+    if (a < 0.01 || !s) return;
+    const [sx, sy] = this.at(this.fromH), [dx, dy] = this.at(this.summitH), [nx, ny] = this.at(nowH);
+    const ink = rgba(look.mark, 0.75 * a);
+    ctx.save();
+    ctx.lineCap = 'round';
+    // 原定路线：从出发点到山顶的一道虚线
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(dx, dy); ctx.stroke();
+    // 量高度：左边一道竖线，从出发的高度到现在的高度，再一道点线引到人脚下
+    const bx = Math.max(12, sx - 20);
+    ctx.setLineDash([2, 4]);
+    ctx.beginPath(); ctx.moveTo(bx, ny); ctx.lineTo(nx - 12, ny); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(bx, sy); ctx.lineTo(bx, ny);
+    ctx.moveTo(bx - 4, sy); ctx.lineTo(bx + 4, sy);
+    ctx.moveTo(bx - 4, ny); ctx.lineTo(bx + 4, ny);
+    ctx.stroke();
+    ctx.fillStyle = rgba(look.mark, a);
+    ctx.beginPath(); ctx.arc(sx, sy, 2.5, 0, Math.PI * 2); ctx.fill();
+
+    ctx.shadowColor = look.halo; ctx.shadowBlur = 6;
+    ctx.font = `600 12px ${SANS}`;
+    ctx.fillStyle = rgba(look.ink, 0.9 * a);
+    ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+    // 竖线顶上两行：爬了多少，比原定快还是慢
+    const top = Math.min(ny, sy);
+    ctx.fillText(`已爬 ${s.pct}%`, bx - 4, top - 24);
+    ctx.font = `500 12px ${SANS}`;
+    ctx.fillStyle = rgba(look.ink, 0.75 * a);
+    ctx.fillText(s.pace, bx - 4, top - 8);
+    ctx.font = `500 11px ${SANS}`;
+    ctx.textBaseline = 'top';
+    ctx.fillText(`${s.from} 出发`, Math.max(4, sx - 8), sy + 10);
+    ctx.restore();
+  }
 
   idleRedrawMs() {
     // 眼前每分钟挪 sx/60 像素；让每次重画只挪半个像素左右
@@ -430,7 +562,8 @@ export class ClimbWorld implements World {
   /** 草甸上的草，偶尔一棵松；每半小时一格，只在闲的时候长 */
   private drawPlants(ctx: CanvasRenderingContext2D, look: Look) {
     const { W, H, T } = this;
-    if (!this.art.grass.every(s => s.ready) || !this.art.pine.ready) return;
+    if (!this.art.grass.every(s => s.ready) || !this.art.pine.ready || this.e > 0.95) return;
+    const fade = 1 - this.e;
     const SLOT = 0.5;
     const tall = clamp(H * 0.075, 44, 72);
     for (let n = Math.floor((T - 7 * 24) / SLOT); n * SLOT < T + 3 * 24; n++) {
@@ -441,8 +574,8 @@ export class ClimbWorld implements World {
       const [x, y] = this.at(h);
       if (x < -40 || x > W + 40) continue;
       const v = r();
-      if (v < 0.05) this.art.pine.drawSmall(ctx, x, y + 3 * k, tall * 1.1 * k, look, 1, r() < 0.5);
-      else if (v < 0.35) this.art.grass[Math.floor(r() * 3)].drawSmall(ctx, x, y + 3 * k, tall * 0.2 * k, look, 0.9, r() < 0.5);
+      if (v < 0.05) this.art.pine.drawSmall(ctx, x, y + 3 * k, tall * 1.1 * k, look, fade, r() < 0.5);
+      else if (v < 0.35) this.art.grass[Math.floor(r() * 3)].drawSmall(ctx, x, y + 3 * k, tall * 0.2 * k, look, 0.9 * fade, r() < 0.5);
     }
   }
 
@@ -450,16 +583,16 @@ export class ClimbWorld implements World {
    * 走过的路：“现在”往左渐渐淡成绢底，像画到这里收了笔。
    * 只淡山体，走过的路和石堆随后再画，看得清。
    */
-  private drawPast(ctx: CanvasRenderingContext2D, ridge: [number, number, number][], sky: Sky, look: Look) {
-    const { CX, H } = this;
+  private drawPast(ctx: CanvasRenderingContext2D, ridge: [number, number, number][], CX: number, sky: Sky, look: Look) {
+    const { H } = this;
     const blank = pigment(mixc(SILK, sky.bot, 0.5), look);
     ctx.save();
     ctx.clip(this.bodyPath(ridge));
     const g = ctx.createLinearGradient(CX - 20, 0, 0, 0);
     g.addColorStop(0, rgba(blank, 0));
-    g.addColorStop(1, rgba(blank, 0.6));
+    g.addColorStop(1, rgba(blank, 0.6 * (1 - 0.6 * this.e)));
     ctx.fillStyle = g;
-    ctx.fillRect(0, 0, CX - 20, H);
+    ctx.fillRect(0, 0, Math.max(0, CX - 20), H);
     ctx.restore();
   }
 
@@ -503,7 +636,7 @@ export class ClimbWorld implements World {
       const r = rng(n * 17 + 900);
       const h = n * SLOT + r() * SLOT;
       const dt = h - T;
-      const a = smooth(6, 48, dt);
+      const a = smooth(6, 48, dt) * (1 - 0.85 * this.e);
       if (a < 0.02) continue;
       const [x, y] = this.at(h);
       if (x > W + 60) continue;
@@ -529,8 +662,9 @@ export class ClimbWorld implements World {
     }
     // 右上角：所有更远的日子都挤在这里，整团压着云
     const g = ctx.createRadialGradient(W, H * 0.16, 0, W, H * 0.16, W * 0.5);
-    g.addColorStop(0, rgba(haze, 0.95));
-    g.addColorStop(0.5, rgba(haze, 0.6));
+    const far = 1 - 0.8 * this.e;
+    g.addColorStop(0, rgba(haze, 0.95 * far));
+    g.addColorStop(0.5, rgba(haze, 0.6 * far));
     g.addColorStop(1, rgba(haze, 0));
     ctx.fillStyle = g;
     ctx.fillRect(W * 0.5, 0, W * 0.5, H * 0.66);
@@ -559,7 +693,8 @@ export class ClimbWorld implements World {
       const [x, y] = this.at(localHours(ms));
       if (x < CX + 24 || x > W - 14 || x - lastX < 30) continue;
       lastX = x;
-      const a = 0.85 * smooth(CX + 24, CX + 60, x);
+      const a = 0.85 * smooth(CX + 24, CX + 60, x) * (1 - this.e);
+      if (a < 0.01) continue;
       ctx.fillStyle = rgba(look.mark, a);
       ctx.beginPath(); ctx.arc(x, y + 3, 1.8, 0, Math.PI * 2); ctx.fill();
       ctx.fillText(text, x, y + 9);
@@ -622,7 +757,7 @@ export class ClimbWorld implements World {
     // 只有几处搭山亭：进行中的，和视角前面最近的两三个，彼此隔开一点；其余的只在路边挂一盏灯
     const pavilions = new Set<EventView>();
     const near = items
-      .filter(it => it.ev.state !== 'ended' && it.h >= T - 2 && campH * it.k >= 18)
+      .filter(it => this.e < 0.5 && it.ev.state !== 'ended' && it.h >= T - 2 && campH * it.k >= 18)
       .sort((a, b) => (b.ev.state === 'live' ? 1 : 0) - (a.ev.state === 'live' ? 1 : 0) || a.h - b.h);
     const placed: number[] = [];
     for (const it of near) {
@@ -665,7 +800,8 @@ export class ClimbWorld implements World {
       if (!pavilions.has(ev) || !this.art.camp.ready) {
         // 路边一根细竹竿挑一盏灯，灯是日程的颜色；太远了只剩一点颜色，越远越藏进云里
         const a = 0.95 * (1 - 0.7 * smooth(36, 240, it.h - T));
-        const pole = size * 0.5;
+        // 回望时只留一点颜色，不挑竹竿，免得一路插满
+        const pole = size * 0.5 * (1 - smooth(0, 0.5, this.e));
         const r = clamp(size * 0.11, 1.3, 4.5);
         if (pole > 6) {
           ctx.strokeStyle = rgba(line, 0.6 * a);
@@ -710,7 +846,8 @@ export class ClimbWorld implements World {
       if (box.x0 < 4 || box.x1 > W - 4 || box.y0 < this.insetTop + 52) continue;
       if (taken.some(b => overlaps(b, box))) continue;
       taken.push(box);
-      const a = ev.state === 'ended' ? 0.7 : 1;
+      const a = (ev.state === 'ended' ? 0.7 : 1) * (1 - smooth(0, 0.4, this.e));
+      if (a < 0.02) break;
       drawLabel(ctx, x, ly, ev.title, sub, a, look);
     }
   }
@@ -778,7 +915,9 @@ const overlaps = (a: Box, b: Box) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 &
 
 /* ---------- 山顶 ---------- */
 
-export interface Summit { ms: number; h: number; label: string; goal: boolean }
+export interface Summit { ms: number; h: number; label: string; goal: boolean; start: number }
+
+interface Stats { from: string; pct: number; pace: string }
 
 /**
  * 山顶：自己设了目标就插在截止日；没设时先放在月底那天傍晚（离月底不到 5 天就放到下个月底）。
@@ -786,13 +925,20 @@ export interface Summit { ms: number; h: number; label: string; goal: boolean }
 export function summitOf(now: number, goal: Goal | null): Summit {
   if (goal) {
     const t = goal.title.length > 14 ? goal.title.slice(0, 13) + '…' : goal.title;
-    return { ms: goal.due, h: localHours(goal.due), label: t, goal: true };
+    // 以前设的目标没记出发时刻，就从那个月一号算起
+    const start = Math.min(goal.start ?? monthStart(now), goal.due - 86_400_000);
+    return { ms: goal.due, h: localHours(goal.due), label: t, goal: true, start };
   }
   const d = new Date(now);
   let end = new Date(d.getFullYear(), d.getMonth() + 1, 0, 18).getTime();
   if (end - now < 5 * 86_400_000) end = new Date(d.getFullYear(), d.getMonth() + 2, 0, 18).getTime();
   const e = new Date(end);
-  return { ms: end, h: localHours(end), label: `月底 · ${e.getMonth() + 1}月${e.getDate()}日`, goal: false };
+  return { ms: end, h: localHours(end), label: `月底 · ${e.getMonth() + 1}月${e.getDate()}日`, goal: false, start: monthStart(now) };
+}
+
+function monthStart(ms: number) {
+  const d = new Date(ms);
+  return new Date(d.getFullYear(), d.getMonth(), 1).getTime();
 }
 
 /** 旗下第二行：设了目标写日期和还有几天；没设时提示可以点 */

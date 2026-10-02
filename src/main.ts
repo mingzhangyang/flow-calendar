@@ -45,12 +45,14 @@ function useWorld(id: string): World {
     b.setAttribute('aria-pressed', String(b.dataset.mode === id));
   }
   (document.getElementById('goal-btn') as HTMLButtonElement).hidden = id !== 'climb';
+  (document.getElementById('overview') as HTMLButtonElement).hidden = !w.setOverview;
   return w;
 }
 
 document.getElementById('modes')!.addEventListener('click', e => {
   const id = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-mode]')?.dataset.mode;
   if (!id || id === world.id) return;
+  setOverview(false);
   world = useWorld(id);
   try { localStorage.setItem('flow.mode', id); } catch { /* 记不住也没关系 */ }
   lastDescription = '';
@@ -130,6 +132,23 @@ function openGoal() {
   goalForm?.open(goal, summitOf(Date.now(), null).ms);
 }
 document.getElementById('goal-btn')!.addEventListener('click', openGoal);
+
+/* ---------- 回望（登山） ----------
+ * 拉远看整座山。拉远时视角先回到“现在”，期间不能拖。
+ */
+let overview = false;
+const overviewBtn = document.getElementById('overview') as HTMLButtonElement;
+function setOverview(on: boolean) {
+  if (on === overview) return;
+  overview = on;
+  if (on) viewport.home(performance.now());
+  world.setOverview?.(on, viewport.reducedMotion);
+  overviewBtn.textContent = on ? '回到眼前' : '回望';
+  overviewBtn.setAttribute('aria-pressed', String(on));
+  lastDescription = '';
+  requestRender();
+}
+overviewBtn.addEventListener('click', () => setOverview(!overview));
 
 document.getElementById('add')!.addEventListener('click', () => {
   // 新建的日程默认放在正在看的时间
@@ -278,6 +297,13 @@ window.addEventListener('keydown', e => {
   if (e.altKey || e.ctrlKey || e.metaKey || dragId !== null || sheet?.isOpen || list?.isOpen || goalForm?.isOpen) return;
   if (e.target instanceof HTMLElement && e.target.closest('input, textarea, select, button')) return;
   const t = performance.now();
+  if (overview) {
+    // 回望时不移动视角；Esc 回到眼前
+    if (e.key !== 'Escape') return;
+    setOverview(false);
+    e.preventDefault();
+    return;
+  }
   if (e.key in KEYS) viewport.nudge(KEYS[e.key], t);
   else if (e.key === 'Home' || e.key === 'Escape') viewport.home(t);
   else return;
@@ -333,12 +359,7 @@ function describe(f: Frame) {
   if (live.length) text += `正在进行：${live.map(e => e.title).join('、')}。`;
   if (next) text += `下一个日程：${next.title}，${fmtDay(next.start)} ${fmtTime(next.start)} 开始。`;
   if (next?.state === 'soon' && prepLeft(next)) text += `还有 ${prepLeft(next)} 项准备没做完。`;
-  if (world.id === 'climb') {
-    text += f.goal
-      ? `目标：${f.goal.title}，${fmtDay(f.goal.due)}截止。`
-      : '还没有设目标，山顶的旗先插在月底。';
-    text += '点山顶的旗可以设目标和截止日。';
-  }
+  text += world.describe?.(f) ?? '';
   text += world.id === 'climb' ? '左右或上下拖动' : '上下拖动';
   text += '可以去看未来或回看过去，方向键按小时移动，Home 键回到现在。右上角的“列表”按钮可以按列表查看和搜索全部日程，左上角可以切换远足和登山两种模式。';
   if (text !== lastDescription) {

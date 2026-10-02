@@ -24,6 +24,7 @@ export class GoalForm {
   private date = this.form.elements.namedItem('date') as HTMLInputElement;
   private error = this.form.querySelector('.error') as HTMLElement;
   private clearBtn = this.form.querySelector('.clear') as HTMLButtonElement;
+  private current: Goal | null = null;
 
   constructor(private deps: GoalDeps) {
     this.form.addEventListener('submit', e => { e.preventDefault(); this.save(); });
@@ -37,6 +38,7 @@ export class GoalForm {
 
   /** 打开表单。没设目标时，截止日先填 fallbackDue（旗现在插的那天） */
   open(goal: Goal | null, fallbackDue: number) {
+    this.current = goal;
     this.error.textContent = '';
     this.title.value = goal?.title ?? '';
     this.date.value = toDateInput(goal?.due ?? fallbackDue);
@@ -64,7 +66,8 @@ export class GoalForm {
     }
     const due = new Date(day!);
     due.setHours(DUE_HOUR, 0, 0, 0);
-    const goal: Goal = { title, due: due.getTime() };
+    // 改目标时保留出发的时刻，回望才接得上；第一次设就从现在出发
+    const goal: Goal = { title, due: due.getTime(), start: this.current?.start ?? Date.now() };
     await this.deps.store.setGoal(goal);
     this.dlg.close();
     this.deps.changed(goal);
