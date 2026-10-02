@@ -25,7 +25,7 @@ import { Terrain } from './terrain';
  * 所以眼前几个小时铺得开，一个月后的山顶也挤在右上角看得见。
  *
  * 纵向是海拔：做过的事一层层垒起来（见 terrain.ts）。沿着山路一段一段往上垒：
- * 每一段的坡度只看这段时间有多忙（排满的约 45° 是陡坡，白天空闲是缓缓的草甸，夜里是平的），
+ * 每一段的坡度只看这段时间有多忙（排满的约 45° 是陡坡，白天空闲是缓缓的草甸，夜里往下走一点，落进两座山梁之间的垭口），
  * 不管远近都一样，所以远处挤在一起的日子也看得出哪段陡、哪段缓。
  * 再整体加一道越往右越陡的山势（往左则缓缓下去），远处的路就升进右上角的云里。
  *
@@ -769,7 +769,8 @@ export class ClimbWorld implements World {
     // 只有几处搭山亭：进行中的，和视角前面最近的两三个，彼此隔开一点；其余的只在路边挂一盏灯
     const pavilions = new Set<EventView>();
     const near = items
-      .filter(it => this.e < 0.5 && it.ev.state !== 'ended' && it.h >= T - 2 && campH * it.k >= 18)
+      // 进行中的总搭山亭（开始了很久的长会也是）；其余的要在视角前面、画出来够大
+      .filter(it => this.e < 0.5 && (it.ev.state === 'live' || (it.ev.state !== 'ended' && it.h >= T - 2 && campH * it.k >= 18)))
       .sort((a, b) => (b.ev.state === 'live' ? 1 : 0) - (a.ev.state === 'live' ? 1 : 0) || a.h - b.h);
     const placed: number[] = [];
     for (const it of near) {
@@ -945,7 +946,8 @@ export function summitOf(now: number, goal: Goal | null): Summit {
   }
   const d = new Date(now);
   let end = new Date(d.getFullYear(), d.getMonth() + 1, 0, 18).getTime();
-  if (end - now < 5 * 86_400_000) end = new Date(d.getFullYear(), d.getMonth() + 2, 0, 18).getTime();
+  // 按本地钟点比，跨夏令时也是整 5 天
+  if (localHours(end) - localHours(now) < 5 * 24) end = new Date(d.getFullYear(), d.getMonth() + 2, 0, 18).getTime();
   const e = new Date(end);
   return { ms: end, h: localHours(end), label: `月底 · ${e.getMonth() + 1}月${e.getDate()}日`, goal: false, start: monthStart(now) };
 }

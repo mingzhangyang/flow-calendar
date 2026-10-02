@@ -73,15 +73,26 @@ export class GoalForm {
     }
     // 改目标时保留出发的时刻，回望才接得上；第一次设就从现在出发
     const goal: Goal = { title, due: due.getTime(), start: this.current?.start ?? Date.now() };
-    await this.deps.store.setGoal(goal);
+    if (!(await this.write(goal))) return;
     this.dlg.close();
     this.deps.changed(goal);
   }
 
   private async clear() {
-    await this.deps.store.setGoal(null);
+    if (!(await this.write(null))) return;
     this.dlg.close();
     this.deps.changed(null);
+  }
+
+  /** 写进存储；失败时表单不关，提示再试 */
+  private async write(goal: Goal | null): Promise<boolean> {
+    try {
+      await this.deps.store.setGoal(goal);
+      return true;
+    } catch {
+      this.error.textContent = '保存失败，请再试一次。';
+      return false;
+    }
   }
 }
 

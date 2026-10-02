@@ -54,6 +54,8 @@ document.getElementById('modes')!.addEventListener('click', e => {
   const id = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-mode]')?.dataset.mode;
   if (!id || id === world.id) return;
   setOverview(false);
+  // 换下来的世界不再重画，过渡停在半路；直接收回，下次切回来就是平常的样子
+  world.setOverview?.(false, true);
   world = useWorld(id);
   try { localStorage.setItem('flow.mode', id); } catch { /* 记不住也没关系 */ }
   lastDescription = '';

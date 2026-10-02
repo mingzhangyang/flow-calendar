@@ -44,8 +44,8 @@ export class Terrain {
     this.key = key;
     this.times = events.flatMap(e => [e.start, e.end]);
 
-    // 往回 9 天（或到出发前一天）、往前 64 天：比视角能去的范围再多一点
-    const h0 = from * 24, h1 = (day0 + 64) * 24;
+    // 往回 9 天（或到出发前一天）；往前要盖住视角最远处（60 天）再往前画出来的 62 天，多留两天
+    const h0 = from * 24, h1 = (day0 + 124) * 24;
     const n = Math.round((h1 - h0) / STEP) + 1;
     this.h0 = h0;
     const raw = new Float32Array(n);
