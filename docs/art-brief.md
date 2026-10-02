@@ -1,19 +1,21 @@
-# 河流世界 · 水墨素材需求
+# 河流世界 · 素材需求
+
+> **画风已改为绢本青绿山水（以《千里江山图》为范本）。** 下面的“统一要求”和“风格锚点”已按青绿更新；各条提示词里的 `[风格锚点]` 换成新的锚点即可。远山和纸纹会优先从公开的古画扫描图里裁取（千里江山图、台北故宫开放资料、克利夫兰/弗利尔/大都会 CC0），这里的素材主要用于岸上点景。
 
 给出图的 agent 用。素材会被代码切成图层，再按时间、透视摆放和着色，所以**格式要求比画面本身更要紧**。
 
 ## 统一要求（每张都适用）
 
-- **纯白背景，只用黑色墨**：不要彩色、不要宣纸纹理、不要印章、不要题字、不要边框。
-  代码会把“白”当成透明、“墨的深浅”当成不透明度，再按钟点染色（白天浓墨、黄昏暖色、夜里月光灰）。背景不是纯白就抠不干净。
-- **主体完整，四周留足白边**：不要被画面边缘裁掉，主体之间不要相互遮挡或粘连。
+- **纯色浅底**：背景是一整块均匀的浅绢色（#E8DCC0）或纯白，不要纹理、不要渐变、不要印章、不要题字、不要边框。代码会抠掉底色，再按钟点调光（白天原色、黄昏偏暖、夜里压暗）。
+- **颜色只用青绿山水的矿物色**：石青、石绿、赭石、墨线，少量朱砂、蛤粉白。不要其他鲜艳颜色。
+- **主体完整，四周留足空白**：不要被画面边缘裁掉，主体之间不要相互遮挡或粘连。
 - **同一批风格一致**：每条提示词都带上下面这段“风格锚点”。
-- 文件为 PNG，尺寸见各条。放到 `assets/ink/`，按下面的文件名命名。
+- 文件为 PNG，尺寸见各条。放到 `assets/art/`，按下面的文件名命名。
 
 **风格锚点**（每条提示词末尾都加上）：
 
 ```
-Traditional Chinese ink wash painting (shuimo), Song dynasty landscape style, monochrome black ink on pure white background, expressive brush strokes with dry-brush texture and soft ink gradients, generous empty white space, isolated subject, no color, no paper texture, no seal stamp, no calligraphy, no border, no frame
+Chinese blue-and-green landscape painting (qinglü shanshui) in the style of Wang Ximeng's "A Thousand Li of Rivers and Mountains", Northern Song dynasty, mineral pigments azurite blue and malachite green over ochre, fine ink outlines, delicate meticulous brushwork, isolated subject on a plain flat light silk-colored background (#E8DCC0), no texture, no gradient background, no seal stamp, no calligraphy, no border, no frame
 ```
 
 ## 1. 雪山（路尽头的主峰）· 最重要
@@ -84,4 +86,4 @@ A single soft horizontal wisp of cloud, very pale diluted ink wash with soft blu
 
 - 每类先出 2–3 张，确认风格后再补齐。
 - 只交 PNG 原图即可，抠图、着色、透视摆放由代码完成。
-- 生成时如果有“负面提示词”，填：`color, colorful, paper texture, seal, stamp, calligraphy, text, signature, border, frame, watermark, gradient background, cropped`
+- 生成时如果有“负面提示词”，填：`neon, saturated modern colors, photorealistic, 3d render, paper texture, seal, stamp, calligraphy, text, signature, border, frame, watermark, gradient background, cropped`

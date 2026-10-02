@@ -1,6 +1,6 @@
 import { type RGB, ellipsePath, mixc, mod, rgba, rng, smooth } from './paint';
 import type { Sky } from './sky';
-import type { Look } from './look';
+import { type Look, AZURITE, INK, MALACHITE, OCHRE, SHELL_WHITE, SILK, pigment } from './look';
 
 /**
  * 河两岸的水墨景物：远山、白云、树、草、小溪、牛羊。
@@ -17,9 +17,9 @@ const FAR_Z = 40;
 
 type Project = (X: number, h: number) => [number, number, number];
 
-/** 墨色：白天是浓墨，夜里换成被月光照到的淡灰，免得在黑岸上看不见 */
+/** 墨色：白天是浓墨，夜里换成灯下的淡赭灰，免得在暗岸上看不见 */
 function inkOf(look: Look): RGB {
-  return mixc(mixc(look.land, [150, 165, 178], 0.3), [34, 42, 40], look.daylight);
+  return mixc(mixc(look.land, [196, 186, 166], 0.3), INK, look.daylight);
 }
 
 export class Scenery {
@@ -51,74 +51,97 @@ export class Scenery {
 
   /* ---------- 天上：远山与白云 ---------- */
 
-  drawFar(ctx: CanvasRenderingContext2D, sky: Sky, night: number, T: number) {
-    this.drawClouds(ctx, sky, night, T);
-    this.drawMountains(ctx, sky, night);
+  drawFar(ctx: CanvasRenderingContext2D, sky: Sky, look: Look, T: number) {
+    this.drawClouds(ctx, sky, look, T);
+    this.drawMountains(ctx, sky, look);
   }
 
-  private drawMountains(ctx: CanvasRenderingContext2D, sky: Sky, night: number) {
+  /**
+   * 青绿山峦：山脚赭石，往上石绿，山脊石青，墨线勾勒。
+   * 颜色沿着山脊走：把山脊线在山体里描几道宽窄不同的色带，
+   * 这样每座峰的峰顶都是青的，而不是整层只有最高处才青。
+   */
+  private drawMountains(ctx: CanvasRenderingContext2D, sky: Sky, look: Look) {
     const { W, HZ } = this;
-    const dark = mixc([52, 64, 70], [5, 8, 16], night);
-    this.drawSnowPeak(ctx, sky, night, dark);
-    const strength = [0.28, 0.45, 0.62];
+    this.drawSnowPeak(ctx, look);
+    const mist = [0.55, 0.35, 0.15];
     this.ridges.forEach((ridge, i) => {
-      const c = mixc(sky.bot, dark, strength[i]);
-      let top = HZ;
-      for (const v of ridge) top = Math.min(top, HZ - v);
+      const m = mist[i];
+      let top = HZ, maxV = 0;
+      for (const v of ridge) { top = Math.min(top, HZ - v); maxV = Math.max(maxV, v); }
 
-      ctx.beginPath();
-      ctx.moveTo(0, HZ + 2);
-      for (let k = 0; k < ridge.length; k++) ctx.lineTo(k * 3, HZ - ridge[k]);
-      ctx.lineTo(W, HZ + 2);
-      ctx.closePath();
-      // 墨色在山脊最浓，往下淡进雾里
-      const g = ctx.createLinearGradient(0, top, 0, HZ);
-      // 不透明，免得星星和太阳从山后透出来
-      g.addColorStop(0, rgba(c, 1));
-      g.addColorStop(0.55, rgba(mixc(c, sky.bot, 0.3), 1));
-      g.addColorStop(1, rgba(mixc(c, sky.bot, 0.9), 1));
-      ctx.fillStyle = g;
-      ctx.fill();
-
-      // 山脊一笔淡墨
-      ctx.beginPath();
+      const shape = new Path2D();
+      shape.moveTo(0, HZ + 2);
+      for (let k = 0; k < ridge.length; k++) shape.lineTo(k * 3, HZ - ridge[k]);
+      shape.lineTo(W, HZ + 2);
+      shape.closePath();
+      const line = new Path2D();
       for (let k = 0; k < ridge.length; k++) {
-        if (k) ctx.lineTo(k * 3, HZ - ridge[k]); else ctx.moveTo(0, HZ - ridge[k]);
+        if (k) line.lineTo(k * 3, HZ - ridge[k]); else line.moveTo(0, HZ - ridge[k]);
       }
-      ctx.strokeStyle = rgba(mixc(c, dark, 0.5), 0.35);
-      ctx.lineWidth = 1;
-      ctx.stroke();
+
+      // 底色：赭石，往下淡进雾里
+      const g = ctx.createLinearGradient(0, top, 0, HZ);
+      g.addColorStop(0, rgba(pigment(mixc(OCHRE, MALACHITE, 0.4), look, m), 1));
+      g.addColorStop(0.6, rgba(pigment(OCHRE, look, m + 0.15), 1));
+      g.addColorStop(1, rgba(pigment(SILK, look, 0.85), 1));
+      ctx.fillStyle = g;
+      ctx.fill(shape);
+
+      ctx.save();
+      ctx.clip(shape);
+      ctx.lineJoin = 'round';
+      // 贴着山脊叠几道由宽到窄、由绿到青的淡色，叠出柔和的过渡：越靠山脊越青越浓
+      for (let j = 0; j < 8; j++) {
+        const t = j / 7;
+        ctx.strokeStyle = rgba(pigment(mixc(MALACHITE, AZURITE, t * t), look, m), 0.2 + 0.08 * t);
+        ctx.lineWidth = maxV * (1.1 - 1.0 * t);
+        ctx.stroke(line);
+      }
+      // 山脚的雾
+      const fog = ctx.createLinearGradient(0, HZ - maxV * 0.45, 0, HZ);
+      fog.addColorStop(0, rgba(sky.bot, 0));
+      fog.addColorStop(1, rgba(sky.bot, 0.9));
+      ctx.fillStyle = fog;
+      ctx.fillRect(0, HZ - maxV * 0.45, W, maxV * 0.45 + 2);
+      ctx.restore();
+
+      // 墨线勾勒山脊
+      ctx.strokeStyle = rgba(pigment(INK, look, m), 0.5);
+      ctx.lineWidth = 0.9;
+      ctx.stroke(line);
     });
   }
 
-  /** 路的尽头，最远处的一座雪山 */
-  private drawSnowPeak(ctx: CanvasRenderingContext2D, sky: Sky, night: number, dark: RGB) {
+  /** 路的尽头，最远处的一座雪山：青绿的山体，峰顶一层蛤粉白雪 */
+  private drawSnowPeak(ctx: CanvasRenderingContext2D, look: Look) {
     const { W, HZ, peak, peakH } = this;
-    const cx = W / 2, top = HZ - peakH;
-    const outline = () => {
-      ctx.beginPath();
-      ctx.moveTo(0, HZ + 2);
-      for (let k = 0; k < peak.length; k++) ctx.lineTo(k * 3, HZ - peak[k]);
-      ctx.lineTo(W, HZ + 2);
-      ctx.closePath();
-    };
+    const cx = W / 2, top = HZ - peakH, m = 0.6;
+    const shape = new Path2D();
+    shape.moveTo(0, HZ + 2);
+    for (let k = 0; k < peak.length; k++) shape.lineTo(k * 3, HZ - peak[k]);
+    shape.lineTo(W, HZ + 2);
+    shape.closePath();
+    const line = new Path2D();
+    let open = false;
+    for (let k = 0; k < peak.length; k++) {
+      if (peak[k] < peakH * 0.12) { open = false; continue; }
+      if (open) line.lineTo(k * 3, HZ - peak[k]); else line.moveTo(k * 3, HZ - peak[k]);
+      open = true;
+    }
 
-    // 山体：很远，所以只比天色深一点
-    const body = mixc(sky.bot, dark, 0.32);
     const g = ctx.createLinearGradient(0, top, 0, HZ);
-    g.addColorStop(0, rgba(body, 1));
-    g.addColorStop(1, rgba(mixc(body, sky.bot, 0.85), 1));
-    outline();
+    g.addColorStop(0, rgba(pigment(AZURITE, look, m), 1));
+    g.addColorStop(0.45, rgba(pigment(MALACHITE, look, m), 1));
+    g.addColorStop(1, rgba(pigment(SILK, look, 0.85), 1));
     ctx.fillStyle = g;
-    ctx.fill();
+    ctx.fill(shape);
 
     ctx.save();
-    outline();
-    ctx.clip();
-
-    // 积雪：白天雪白，早晚被霞光染暖，夜里是月光下的淡灰
-    const snow = mixc(mixc([250, 251, 253], sky.bot, 0.22), mixc(sky.bot, [190, 200, 225], 0.4), night);
-    const line = (x: number) => {
+    ctx.clip(shape);
+    // 积雪：蛤粉白，早晚被霞光染暖，夜里随画面一起压暗
+    const snow = pigment(SHELL_WHITE, look, 0.15);
+    const snowLine = (x: number) => {
       // 雪线参差，沟里的雪舌往下伸
       const n = Math.sin(x * 0.07) * 0.03 + Math.sin(x * 0.19 + 1) * 0.015;
       const tongue = Math.max(0, Math.sin(x * 0.055 + 0.6)) ** 6 * 0.16;
@@ -127,21 +150,21 @@ export class Scenery {
     ctx.beginPath();
     ctx.moveTo(0, top - 2);
     ctx.lineTo(W, top - 2);
-    for (let x = W; x >= 0; x -= 3) ctx.lineTo(x, line(x));
+    for (let x = W; x >= 0; x -= 3) ctx.lineTo(x, snowLine(x));
     ctx.closePath();
-    ctx.fillStyle = rgba(snow, 0.96);
+    ctx.fillStyle = rgba(snow, 0.95);
     ctx.fill();
 
-    // 背光的一面：右侧淡淡一层墨
+    // 背光的一面：右侧淡淡一层石青
     const sh = ctx.createLinearGradient(cx - peakH * 0.2, 0, cx + peakH * 1.4, 0);
-    sh.addColorStop(0, rgba(dark, 0));
-    sh.addColorStop(0.25, rgba(dark, 0.16 - 0.08 * night));
-    sh.addColorStop(1, rgba(dark, 0.04));
+    sh.addColorStop(0, rgba(AZURITE, 0));
+    sh.addColorStop(0.25, rgba(pigment(AZURITE, look), 0.22));
+    sh.addColorStop(1, rgba(pigment(AZURITE, look), 0.08));
     ctx.fillStyle = sh;
     ctx.fillRect(cx - peakH * 0.2, top - 2, peakH * 3, peakH + 4);
 
-    // 山脊上几笔皴擦，从峰顶往下
-    ctx.strokeStyle = rgba(dark, 0.14);
+    // 几笔皴，从峰顶往下
+    ctx.strokeStyle = rgba(pigment(INK, look, 0.3), 0.22);
     ctx.lineWidth = 1;
     for (const [dx, len] of [[-0.25, 0.3], [0.18, 0.38], [0.42, 0.26], [-0.55, 0.22]]) {
       const x0 = cx + dx * peakH * 0.6;
@@ -153,22 +176,16 @@ export class Scenery {
     }
     ctx.restore();
 
-    // 山的轮廓一笔淡墨，免得雪顶和浅色的天空混在一起
-    ctx.beginPath();
-    for (let k = 0; k < peak.length; k++) {
-      if (peak[k] < peakH * 0.15) continue;
-      const x = k * 3, y = HZ - peak[k];
-      if (k && peak[k - 1] >= peakH * 0.15) ctx.lineTo(x, y); else ctx.moveTo(x, y);
-    }
-    ctx.strokeStyle = rgba(mixc(body, dark, 0.6), 0.45);
+    ctx.strokeStyle = rgba(pigment(INK, look, 0.35), 0.55);
     ctx.lineWidth = 1;
-    ctx.stroke();
+    ctx.stroke(line);
   }
 
-  private drawClouds(ctx: CanvasRenderingContext2D, sky: Sky, night: number, T: number) {
+  /** 云：留白的绢，比天色亮一点 */
+  private drawClouds(ctx: CanvasRenderingContext2D, sky: Sky, look: Look, T: number) {
     const { W, HZ } = this;
-    const col = mixc(mixc([250, 248, 242], sky.bot, 0.25), mixc(sky.bot, [120, 130, 160], 0.4), night);
-    const alpha = 0.6 - 0.3 * night;
+    const col = mixc(pigment(SHELL_WHITE, look, 0.2), sky.bot, 0.15);
+    const alpha = 0.4 + 0.35 * look.daylight;
     for (const cl of this.clouds) {
       const span = W + cl.w * 2;
       const cx = mod(cl.u * span + T * cl.speed * W, span) - cl.w;
@@ -193,10 +210,11 @@ export class Scenery {
 
   drawBanks(ctx: CanvasRenderingContext2D, project: Project, bend: (h: number) => number, T: number, tau: number, look: Look) {
     const ink = inkOf(look);
-    const grass = mixc(look.land, ink, 0.55);
-    const wash = mixc(look.land, ink, 0.3);
-    const water = mixc(look.waterTop, [255, 255, 255], 0.12 * look.daylight);
-    const wool = mixc(mixc(look.land, [200, 210, 220], 0.35), [246, 242, 230], look.daylight);
+    const grass = pigment(mixc(MALACHITE, INK, 0.35), look);
+    const wash = pigment(mixc(MALACHITE, AZURITE, 0.3), look);
+    const water = mixc(look.waterTop, look.waterBot, 0.3);
+    const wool = pigment(SHELL_WHITE, look, 0.1);
+    const leaves: [RGB, RGB] = [pigment(MALACHITE, look), pigment(mixc(AZURITE, MALACHITE, 0.3), look)];
     const items: [number, () => void][] = [];
 
     const k0 = Math.floor((T - tau * 0.7 - 2) / SLOT), k1 = Math.ceil((T + tau * (FAR_Z - 1)) / SLOT);
@@ -252,7 +270,7 @@ export class Scenery {
           for (let i = 0; i < n; i++) {
             const [x, y, z] = at(d + i * (0.07 + r() * 0.1), h0 + (r() - 0.5) * 0.25);
             const s = this.scale(z);
-            if (s && z < FAR_Z && s * 0.2 > 2) items.push([z, () => tree(ctx, x, y, s, ink, fade(z), rng(seed + i))]);
+            if (s && z < FAR_Z && s * 0.2 > 2) items.push([z, () => tree(ctx, x, y, s, ink, leaves, fade(z), rng(seed + i))]);
           }
         } else if (kind < 0.58) {
           // 一丛丛草
@@ -369,7 +387,7 @@ function stream(
   }
 }
 
-function tree(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, ink: RGB, a: number, r: () => number) {
+function tree(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, ink: RGB, leaves: [RGB, RGB], a: number, r: () => number) {
   const ht = (0.16 + r() * 0.14) * s;
   const lean = (r() - 0.5) * 0.3 * ht;
   const tx = x + lean, ty = y - ht * 0.82;
@@ -394,7 +412,7 @@ function tree(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, in
       for (let j = 0; j < dabs; j++) {
         const ox = ((j / (dabs - 1)) - 0.5) * rx * 1.4 + (r() - 0.5) * rx * 0.3;
         const rr = rx * (0.3 + r() * 0.25) * (1 - Math.abs(ox) / (rx * 1.6));
-        ctx.fillStyle = rgba(ink, (0.22 + r() * 0.25) * a);
+        ctx.fillStyle = rgba(mixc(leaves[1], ink, 0.25), (0.55 + r() * 0.3) * a);
         ellipsePath(ctx, cx + ox, cy + (r() - 0.5) * rx * 0.12 + Math.abs(ox) * 0.12, rr * 1.3, rr * 0.5);
         ctx.fill();
       }
@@ -404,7 +422,7 @@ function tree(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, in
     const n = 5 + Math.floor(r() * 4);
     for (let i = 0; i < n; i++) {
       const ang = r() * Math.PI * 2, d = r() * ht * 0.2;
-      ctx.fillStyle = rgba(ink, (0.16 + r() * 0.18) * a);
+      ctx.fillStyle = rgba(leaves[i % 2], (0.45 + r() * 0.3) * a);
       ctx.beginPath();
       ctx.arc(tx + Math.cos(ang) * d * 1.3, ty + Math.sin(ang) * d * 0.8, ht * (0.12 + r() * 0.1), 0, Math.PI * 2);
       ctx.fill();

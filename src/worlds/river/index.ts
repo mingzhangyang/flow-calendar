@@ -6,9 +6,10 @@ import {
   mixc, mod, rgba, rng, smooth, strokeLine,
 } from './paint';
 import { type Sky, celestial, drawSky, nightAt, skyAt } from './sky';
-import { type Look, lookAt } from './look';
+import { type Look, OCHRE, INK, lookAt, pigment } from './look';
 import { daylightAt } from '../../model/daylight';
 import { Scenery } from './scenery';
+import { silkPattern } from './silk';
 
 /**
  * 河流世界
@@ -66,15 +67,16 @@ export class RiverWorld implements World {
     const look = lookAt(sky, daylightAt(f.view));
 
     drawSky(ctx, W, HZ, sky, night, body);
-    this.scenery.drawFar(ctx, sky, night, this.T);
+    this.scenery.drawFar(ctx, sky, look, this.T);
     this.drawWater(ctx, look, body);
     this.drawWaterLines(ctx, look);
     this.drawBank(ctx, -1, sky, look);
     this.drawBank(ctx, 1, sky, look);
     this.scenery.drawBanks(ctx, (X, h) => this.project(X, h), bend, this.T, TAU, look);
     this.drawHaze(ctx, sky);
-    this.drawStreaks(ctx, look);
+    this.drawRipples(ctx, look);
     this.drawHorizonMarks(ctx, f.now, look);
+    this.drawSilk(ctx, look);
     this.drawEvents(ctx, f.events, night, look);
     this.drawNowLine(ctx, f.now, look);
   }
@@ -180,9 +182,13 @@ export class RiverWorld implements World {
     ctx.fillStyle = g;
     ctx.fill();
 
+    // 岸边一道赭石的沙岸，再用墨勾一笔
     ctx.beginPath();
     pts.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])));
-    ctx.strokeStyle = rgba(mixc(sky.bot, [255, 255, 255], 0.3), 0.25);
+    ctx.strokeStyle = rgba(pigment(OCHRE, look), 0.4);
+    ctx.lineWidth = 5;
+    ctx.stroke();
+    ctx.strokeStyle = rgba(pigment(INK, look), 0.35);
     ctx.lineWidth = 1;
     ctx.stroke();
   }
@@ -191,28 +197,62 @@ export class RiverWorld implements World {
     const { W, H, HZ } = this;
     const g = ctx.createLinearGradient(0, HZ - H * 0.05, 0, HZ + H * 0.07);
     g.addColorStop(0, rgba(sky.bot, 0));
-    g.addColorStop(0.42, rgba(sky.bot, 0.7));
+    g.addColorStop(0.42, rgba(sky.bot, 0.85));
     g.addColorStop(1, rgba(sky.bot, 0));
     ctx.fillStyle = g;
     ctx.fillRect(0, HZ - H * 0.05, W, H * 0.12);
   }
 
-  /** 水纹：钉在时间轴上，随时间一起往下漂 */
-  private drawStreaks(ctx: CanvasRenderingContext2D, look: Look) {
-    const { T } = this;
-    const c = look.streak, span = 48;
-    for (const s of STREAKS) {
-      const h = T - 2.2 + mod(s[1] * span - (T - 2.2), span);
-      const z = this.z(h);
+  /**
+   * 水纹：青绿山水里的网巾纹，一排排相互错开的小弧线。
+   * 钉在时间轴上，随时间一起往下漂；远处排得太密时淡掉，水面留白成雾。
+   */
+  private drawRipples(ctx: CanvasRenderingContext2D, look: Look) {
+    const { T, D } = this;
+    const step = 0.13, aw = 0.075;
+    ctx.save();
+    ctx.lineWidth = 0.8;
+    for (let k = Math.ceil((T - TAU * 0.65) / step); ; k++) {
+      const h = k * step, z = this.z(h);
+      const gap = D / z - D / (z + step / TAU);
+      if (gap < 2.5) break;
       if (z < 0.35) continue;
-      const X = bend(h) + s[0];
-      const a = 0.28 * smooth(0.5, 1, z) * (1 - smooth(5, 14, z)); // “现在”线以下淡掉，不像雨
-      if (a < 0.01) continue;
-      const p1 = this.project(X, h), p2 = this.project(X, h - 0.22);
-      ctx.strokeStyle = rgba(c, a);
-      ctx.lineWidth = Math.max(0.6, 1.4 / z);
-      strokeLine(ctx, p1[0], p1[1], p2[0], p2[1]);
+      // “现在”线以下离得太近，纹样会变大变呆板，淡掉
+      const a = look.rippleAlpha * smooth(2.5, 6, gap) * (0.35 + 0.65 * smooth(0.75, 1.05, z));
+      const shift = mod(k, 2) ? aw / 2 : 0;
+      const b = bend(h);
+      const r = rng(k * 31 + 7);
+      ctx.beginPath();
+      for (let X = -0.85 + shift; X + aw <= 0.85; X += aw) {
+        // 每一笔长短、起伏略有不同，像手画的
+        if (r() < 0.12) continue;
+        const x0 = X + r() * aw * 0.15, x1 = X + aw * (0.9 + r() * 0.15);
+        const p0 = this.project(b + x0, h), p1 = this.project(b + x1, h);
+        const c = this.project(b + (x0 + x1) / 2, h - step * (0.6 + r() * 0.5));
+        ctx.moveTo(p0[0], p0[1]);
+        ctx.quadraticCurveTo(c[0], c[1], p1[0], p1[1]);
+      }
+      ctx.strokeStyle = rgba(look.ripple, a);
+      ctx.stroke();
     }
+    ctx.restore();
+  }
+
+  /** 整幅画盖一层绢的经纬和四角的旧色 */
+  private drawSilk(ctx: CanvasRenderingContext2D, look: Look) {
+    const { W, H } = this;
+    ctx.save();
+    ctx.fillStyle = silkPattern(ctx);
+    ctx.globalAlpha = 0.55 + 0.25 * look.daylight;
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = 1;
+    const r = Math.hypot(W, H) / 2;
+    const g = ctx.createRadialGradient(W / 2, H * 0.45, r * 0.45, W / 2, H * 0.45, r);
+    g.addColorStop(0, rgba(OCHRE, 0));
+    g.addColorStop(1, rgba(mixc(OCHRE, INK, 0.4), 0.16));
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
   }
 
   /** 地平线附近的路标：明天、下周一、下个月（都相对真实的今天） */
@@ -320,10 +360,3 @@ export class RiverWorld implements World {
 /* 每个日程在河面上的横向位置和颜色，由 id、标题决定，保持稳定 */
 const laneOf = (id: string) => ((hashStr(id) % 1000) / 1000 - 0.5) * 0.76;
 const colorOf = (title: string) => PALETTE[hashStr(title) % PALETTE.length];
-
-const STREAKS: [number, number][] = [];
-{
-  const r = rng(11);
-  for (let i = 0; i < 160; i++) STREAKS.push([r() * 1.6 - 0.8, r()]);
-}
-

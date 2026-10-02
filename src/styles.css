@@ -5,21 +5,21 @@
 /* 界面明暗跟着真实钟点：白天浅色，夜里深色。由 main.ts 设置 data-theme。
    以后的详情面板、表单、列表都用这些变量。 */
 :root, :root[data-theme="dark"] {
-  --bg: #070C10;
-  --ink: #EEF2F0;
-  --ink-soft: rgba(238, 242, 240, .66);
-  --panel: rgba(14, 22, 30, .92);
-  --line: rgba(238, 242, 240, .14);
-  --accent: #F6DFA8;
+  --bg: #26232A;
+  --ink: #F2E9D6;
+  --ink-soft: rgba(242, 233, 214, .66);
+  --panel: rgba(40, 36, 40, .92);
+  --line: rgba(242, 233, 214, .14);
+  --accent: #E8B872;
   color-scheme: dark;
 }
 :root[data-theme="light"] {
-  --bg: #D9E6EC;
-  --ink: #16262F;
-  --ink-soft: rgba(22, 38, 47, .66);
-  --panel: rgba(250, 252, 252, .94);
-  --line: rgba(22, 38, 47, .12);
-  --accent: #8A5212;
+  --bg: #E4D6B8;
+  --ink: #30281E;
+  --ink-soft: rgba(48, 40, 30, .66);
+  --panel: rgba(246, 238, 220, .94);
+  --line: rgba(48, 40, 30, .14);
+  --accent: #A83A22;
   color-scheme: light;
 }
 *, *::before, *::after { box-sizing: inherit; }

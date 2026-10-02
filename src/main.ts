@@ -192,7 +192,7 @@ function applyTheme(theme: Theme) {
   if (theme === currentTheme) return;
   currentTheme = theme;
   document.documentElement.dataset.theme = theme;
-  themeMeta?.setAttribute('content', theme === 'light' ? '#D9E6EC' : '#070C10');
+  themeMeta?.setAttribute('content', theme === 'light' ? '#E4D6B8' : '#26232A');
 }
 
 /* ---------- 给读屏软件的文字说明 ---------- */

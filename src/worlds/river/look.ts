@@ -2,49 +2,72 @@ import { type RGB, mixc } from './paint';
 import type { Sky } from './sky';
 
 /**
- * 河流世界在某个时刻的配色。
- * 水和岸随白天程度连续变化；文字颜色在白天过半时整体切换一次，
- * 保证任何时候都看得清。
+ * 河流世界在某个时刻的配色：绢本青绿山水。
+ *
+ * 底子是绢，山水用矿物颜料：石青、石绿、赭石，勾勒用墨，点睛用朱砂。
+ * 钟点只改变“光”：清晨黄昏给绢染上暖色，夜里像在灯下看画，整体压暗，
+ * 颜料本身不变。文字颜色在白天过半时整体切换一次，保证任何时候都看得清。
  */
+
+/** 颜料 */
+export const SILK: RGB = [228, 214, 182];
+export const AZURITE: RGB = [52, 104, 150];   // 石青
+export const MALACHITE: RGB = [62, 138, 112]; // 石绿
+export const OCHRE: RGB = [172, 118, 66];     // 赭石
+export const INK: RGB = [48, 40, 32];         // 墨（偏暖）
+export const VERMILION: RGB = [196, 64, 40];  // 朱砂
+export const SHELL_WHITE: RGB = [246, 241, 228]; // 蛤粉
+
+/** 夜里各通道保留的亮度：整体压暗、略偏青，颜料的色相不变 */
+const NIGHT_KEEP: RGB = [0.36, 0.4, 0.5];
+
 export interface Look {
   daylight: number;
   light: boolean;
+  /** 天色（绢在此刻光线下的颜色），用来给颜料染一点环境光 */
+  tint: RGB;
   waterTop: RGB; waterBot: RGB;
   land: RGB; landShade: number;
   line: RGB; lineGain: number;
-  streak: RGB;
+  ripple: RGB; rippleAlpha: number;
   ink: RGB; inkSoft: number; halo: string;
   now: RGB; nowGlow: RGB;
   mark: RGB;
 }
 
-const DEEP: RGB = [6, 16, 24];
-const WHITE: RGB = [255, 255, 255];
+/**
+ * 颜料在此刻光线下的样子：先染一点天色，再按夜的程度压暗。
+ * mist 表示被雾吞掉多少（远处的东西更淡、更接近绢色）。
+ */
+export function pigment(c: RGB, look: Look, mist = 0): RGB {
+  const lit = mixc(mixc(c, look.tint, 0.12), look.tint, mist);
+  // 雾本身就是天色（夜里已经暗了），所以被雾吞掉的部分少压暗一些
+  const k = (1 - look.daylight) * (1 - mist);
+  const dark: RGB = [lit[0] * NIGHT_KEEP[0], lit[1] * NIGHT_KEEP[1], lit[2] * NIGHT_KEEP[2]];
+  return mixc(lit, dark, k);
+}
 
 export function lookAt(sky: Sky, daylight: number): Look {
   const d = daylight;
   const light = d >= 0.5;
-
-  const nightTop = mixc(sky.bot, DEEP, 0.35), nightBot = mixc(sky.top, DEEP, 0.82);
-  const dayTop = mixc(sky.bot, WHITE, 0.3), dayBot = mixc(sky.top, [176, 206, 220], 0.7);
-
-  const nightLand = mixc([14, 24, 22], sky.top, 0.18), dayLand = mixc([138, 164, 142], sky.top, 0.1);
+  const base = { daylight: d, light, tint: sky.bot } as Look;
 
   return {
-    daylight: d,
-    light,
-    waterTop: mixc(nightTop, dayTop, d),
-    waterBot: mixc(nightBot, dayBot, d),
-    land: mixc(nightLand, dayLand, d),
-    landShade: 0.4 - 0.25 * d,
-    line: mixc(mixc(sky.bot, WHITE, 0.35), [38, 72, 92], d),
-    lineGain: 1 + 0.3 * d,
-    streak: mixc(mixc(sky.bot, WHITE, 0.5), [52, 90, 112], d),
-    ink: light ? [22, 38, 50] : [255, 255, 255],
-    inkSoft: light ? 0.7 : 0.72,
-    halo: light ? 'rgba(255,255,255,.9)' : 'rgba(0,0,0,.6)',
-    now: light ? [92, 50, 8] : [255, 240, 215],
-    nowGlow: light ? [196, 128, 40] : [255, 236, 205],
-    mark: light ? [70, 60, 40] : [255, 243, 224],
+    ...base,
+    // 水：远处淡进绢色的雾里，近处是淡淡的青绿
+    waterTop: pigment(mixc(SILK, [196, 214, 196], 0.5), base, 0.35),
+    waterBot: pigment(mixc([150, 186, 176], AZURITE, 0.22), base),
+    land: pigment(mixc(MALACHITE, OCHRE, 0.32), base),
+    landShade: 0.22 - 0.1 * d,
+    line: pigment(mixc(INK, AZURITE, 0.4), base),
+    lineGain: 0.55 + 0.25 * d,
+    ripple: light ? mixc(AZURITE, INK, 0.35) : mixc(sky.bot, [210, 220, 214], 0.5),
+    rippleAlpha: light ? 0.32 : 0.22,
+    ink: light ? INK : [246, 238, 222],
+    inkSoft: light ? 0.72 : 0.72,
+    halo: light ? 'rgba(244,236,214,.92)' : 'rgba(20,18,22,.6)',
+    now: light ? [150, 44, 24] : [255, 232, 204],
+    nowGlow: light ? VERMILION : [255, 214, 170],
+    mark: light ? [96, 70, 40] : [246, 232, 210],
   };
 }

@@ -37,12 +37,12 @@ export function ellipsePath(ctx: CanvasRenderingContext2D, x: number, y: number,
   ctx.ellipse(x, y, Math.max(0.1, rx), Math.max(0.1, ry), 0, 0, Math.PI * 2);
 }
 
-/** 光球的颜色 */
+/** 光球的颜色：取自青绿山水的矿物颜料 */
 export const PALETTE: RGB[] = [
-  [95, 211, 196],  // 青
-  [180, 151, 255], // 紫
-  [255, 194, 102], // 琥珀
-  [255, 143, 163], // 粉
+  [214, 84, 56],   // 朱砂
+  [66, 128, 186],  // 石青
+  [58, 156, 122],  // 石绿
+  [216, 166, 70],  // 泥金
 ];
 
 export interface OrbGeom { x: number; wy: number; z: number; r: number }
