@@ -16,8 +16,6 @@ import { ART } from './art';
 const SLOT = 0.5;
 /** 比这更远的景物不画（已经挤在地平线的雾里） */
 const FAR_Z = 40;
-/** 桥的全长（世界单位）：河宽 1.7，两头各搭上岸一点 */
-export const BRIDGE_W = 2.1;
 /** 贴地的东西（小溪、草地晕染）排序时加上这个数，总在立着的树、草、牛羊之前画 */
 const FLAT = 1e4;
 
@@ -52,8 +50,6 @@ export class Scenery {
   private grassArt: Sprite[];
   private buffaloArt: Sprite[];
   private sheepArt: Sprite;
-  /** 每天午夜横跨河面的一座石桥 */
-  private bridgeArt: Sprite;
   /** 三层远山的轮廓高度（像素），每 3 像素一个采样，从远到近 */
   private ridges: Float32Array[] = [];
   /** 河流尽头的雪山：轮廓高度和峰高 */
@@ -69,7 +65,6 @@ export class Scenery {
     this.grassArt = [ART.grass1, ART.grass2, ART.grass3].map(a => new Sprite(a, invalidate));
     this.buffaloArt = [ART.buffalo1, ART.buffalo2].map(a => new Sprite(a, invalidate));
     this.sheepArt = new Sprite(ART.sheep1, invalidate);
-    this.bridgeArt = new Sprite(ART.bridge1, invalidate);
   }
 
   resize(W: number, H: number, HZ: number) {
@@ -283,10 +278,7 @@ export class Scenery {
     }
   }
 
-  /* ---------- 岸上：树、草、小溪、牛羊；河上：每天午夜一座桥 ---------- */
-
-  /** 桥画出来了没有（没加载好时，水面上的午夜线照旧加重，代替桥标出一天的分界） */
-  get bridges() { return this.bridgeArt.ready; }
+  /* ---------- 岸上：树、草、小溪、牛羊 ---------- */
 
   drawBanks(ctx: CanvasRenderingContext2D, project: Project, bend: (h: number) => number, T: number, tau: number, look: Look) {
     const ink = inkOf(look);
@@ -395,19 +387,6 @@ export class Scenery {
             }
           }
         }
-      }
-    }
-
-    // 桥：每天午夜一座，横跨河面，两头搭在岸上。和树一起按远近排，近处的东西挡住远处的桥
-    if (this.bridgeArt.ready) {
-      for (let d = Math.ceil((T - tau * 0.7) / 24); d * 24 < T + tau * (FAR_Z - 1); d++) {
-        const h = d * 24;
-        const [x, y, z] = project(bend(h), h);
-        const s = this.scale(z);
-        const w = BRIDGE_W * s;
-        // 太小（挤在地平线上）或已经漂到“现在”线后面很近的，淡掉
-        const a = smooth(10, 26, w) * smooth(0.45, 0.7, z);
-        if (s && a > 0.01) items.push([z, () => this.bridgeArt.drawSmall(ctx, x, y, w / this.bridgeArt.aspect, look, a, false, 0.5)]);
       }
     }
 

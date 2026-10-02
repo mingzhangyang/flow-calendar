@@ -38,7 +38,6 @@ const JOBS = [
   { name: 'buffalo-1', width: 256, ground: true, lo: 10, hi: 30 },
   { name: 'buffalo-2', width: 256, ground: true, lo: 10, hi: 30 },
   { name: 'sheep-1', width: 192, ground: true, lo: 9, hi: 24 },
-  { name: 'bridge-1', width: 768, ground: true, lo: 10, hi: 30 },
 ];
 
 /** 色差低于 LO 全透明，高于 HI 不透明；泛洪只穿过色差低于 HI 的像素 */
