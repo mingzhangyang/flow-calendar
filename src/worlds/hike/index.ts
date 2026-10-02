@@ -6,7 +6,7 @@ import {
   mixc, mod, rgba, rng, smooth, strokeLine,
 } from './paint';
 import { type Sky, celestial, drawSky, nightAt, skyAt } from './sky';
-import { type Look, OCHRE, INK, lookAt, pigment } from './look';
+import { type Look, OCHRE, INK, SILK, lookAt, pigment } from './look';
 import { daylightAt } from '../../model/daylight';
 import { Scenery } from './scenery';
 import { silkPattern } from './silk';
@@ -20,8 +20,12 @@ import { silkPattern } from './silk';
  * TAU 越大，近处的几个小时铺得越开。
  */
 const TAU = 3.5;
-/** 路的轻微弯曲 */
-const bend = (h: number) => 0.22 * Math.sin(h * 0.13);
+/**
+ * 路的弯曲（还没乘远近的幅度）：两层快慢不同的摆动，钉在时间轴上。
+ * 真正画的时候脚下的路是直的，越往远处摆得越开（见 HikeWorld.bend），
+ * 像走在一条弯路上：前面的路总在左右绕，走到跟前才正过来。
+ */
+const sway = (h: number) => 0.62 * Math.sin(h * 0.19 + 0.8) + 0.38 * Math.sin(h * 0.071 + 2.1);
 /** 路的半宽（世界单位） */
 const ROAD = 0.5;
 
@@ -42,8 +46,6 @@ function noise(u: number, seed: number): number {
  */
 const edgeOf = (h: number, side: -1 | 1) =>
   ROAD + 0.12 * (noise(h * 0.8, side + 3) - 0.5) + 0.06 * (noise(h * 2.6, side + 7) - 0.5) + 0.025 * (noise(h * 7, side + 11) - 0.5);
-/** 路边那一点的横向位置 */
-const edgeX = (h: number, side: -1 | 1) => bend(h) + side * edgeOf(h, side);
 
 interface Hit { id: string; x: number; y: number; r: number }
 
@@ -78,6 +80,16 @@ export class HikeWorld implements World {
 
   private z(h: number) { return 1 + (h - this.T) / TAU; }
 
+  /** 时刻 h 处路中心的横向位置：近处几乎居中，远处左右绕开 */
+  private bend(h: number) {
+    const z = this.z(h);
+    const amp = 0.12 + smooth(1, 3.5, z) * (1.1 + 0.25 * Math.sqrt(Math.max(0, z - 3.5)));
+    return amp * sway(h);
+  }
+
+  /** 路边那一点的横向位置 */
+  private edgeX = (h: number, side: -1 | 1) => this.bend(h) + side * edgeOf(h, side);
+
   /** 路面上一点 → 屏幕坐标。X 是横向位置（路中心为 0，两边约 ±ROAD） */
   private project(X: number, h: number): [number, number, number] {
     const z = this.z(h);
@@ -100,9 +112,11 @@ export class HikeWorld implements World {
     this.drawHourLines(ctx, look);
     this.drawBank(ctx, -1, sky, look);
     this.drawBank(ctx, 1, sky, look);
-    this.scenery.drawBanks(ctx, (X, h) => this.project(X, h), edgeX, this.T, TAU, look);
+    this.scenery.drawBanks(ctx, (X, h) => this.project(X, h), this.edgeX, this.T, TAU, look);
     this.drawHaze(ctx, sky);
     this.drawRoadTexture(ctx, look);
+    this.drawMist(ctx, sky, look);
+    this.drawPast(ctx, sky, look);
     this.drawHorizonMarks(ctx, f.now, look);
     this.drawSilk(ctx, look);
     this.drawEvents(ctx, f.events, night, look);
@@ -150,7 +164,7 @@ export class HikeWorld implements World {
 
   private polyAcross(ctx: CanvasRenderingContext2D, h: number, c: RGB, a: number) {
     ctx.beginPath();
-    const x0 = edgeX(h, -1), x1 = edgeX(h, 1);
+    const x0 = this.edgeX(h, -1), x1 = this.edgeX(h, 1);
     for (let i = 0; i <= 14; i++) {
       const X = x0 + ((x1 - x0) * i) / 14;
       const [x, y] = this.project(X, h);
@@ -185,7 +199,7 @@ export class HikeWorld implements World {
     const hs: number[] = [];
     for (let z = 0.3; z < 300; z *= 1.03) {
       const h = T + (z - 1) * TAU;
-      const [x, y] = this.project(edgeX(h, side), h);
+      const [x, y] = this.project(this.edgeX(h, side), h);
       pts.push([x, y]);
       hs.push(h);
     }
@@ -202,6 +216,19 @@ export class HikeWorld implements World {
     g.addColorStop(1, rgba(mixc(land, [0, 0, 0], look.landShade), 1));
     ctx.fillStyle = g;
     ctx.fill();
+
+    // 留白：石绿只贴着路晕开，往画边上淡成绢底
+    ctx.save();
+    ctx.clip();
+    const x0 = side < 0 ? 0 : W, x1 = W / 2 + side * W * 0.12;
+    const blank = pigment(mixc(SILK, sky.bot, 0.5), look);
+    const lg = ctx.createLinearGradient(x0, 0, x1, 0);
+    lg.addColorStop(0, rgba(blank, 0.82));
+    lg.addColorStop(0.45, rgba(blank, 0.5));
+    lg.addColorStop(1, rgba(blank, 0));
+    ctx.fillStyle = lg;
+    ctx.fillRect(Math.min(x0, x1), HZ, Math.abs(x1 - x0), H - HZ);
+    ctx.restore();
 
     // 路边一道赭石的土边，宽窄不一；再用墨断断续续勾几笔，不描成一条整齐的线
     const ochre = pigment(OCHRE, look), ink = pigment(INK, look);
@@ -236,6 +263,76 @@ export class HikeWorld implements World {
   }
 
   /**
+   * 云锁：路上隔一段飘着一片雾，把路、田野和树都吞掉一截，过了雾路才又露出来。
+   * 雾钉在时间轴上；离“现在”近了就散开，不挡眼前的路。日程画在雾上面，不会被藏住。
+   */
+  private drawMist(ctx: CanvasRenderingContext2D, sky: Sky, look: Look) {
+    const { T, S } = this;
+    const SLOT = 11;
+    for (let k = Math.floor((T + TAU * 0.8) / SLOT); k * SLOT < T + TAU * 90; k++) {
+      const r = rng(k * 13 + 4_200_000);
+      if (r() > 0.7) continue;
+      const h = k * SLOT + r() * SLOT * 0.6;
+      const off = (r() - 0.5) * 0.6, z = this.z(h);
+      // 夜里雾比田野亮，淡一些，免得像一道灰带
+      const a = smooth(1.7, 2.6, z) * smooth(90, 40, z) * (0.55 + 0.45 * look.daylight);
+      if (a < 0.02) continue;
+      // 几团压扁的雾叠在一起，横着拉开，边缘是软的
+      const span = 0.9 + r() * 0.9, depth = 1 + r() * 1.5;
+      const n = 4 + Math.floor(r() * 4);
+      for (let i = 0; i < n; i++) {
+        const dx = (r() - 0.5) * span * 2, dh = (r() - 0.5) * depth;
+        const [cx, cy, cz] = this.project(this.bend(h + dh) + off + dx * 0.5, h + dh);
+        const rx = ((0.35 + r() * 0.6) * span * S) / cz, ry = Math.max(3, rx * (0.08 + r() * 0.06));
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(1, ry / rx);
+        const g = ctx.createRadialGradient(0, 0, 0, 0, 0, rx);
+        g.addColorStop(0, rgba(sky.bot, 0.9 * a));
+        g.addColorStop(0.55, rgba(sky.bot, 0.6 * a));
+        g.addColorStop(1, rgba(sky.bot, 0));
+        ctx.fillStyle = g;
+        ctx.fillRect(-rx, -rx, rx * 2, rx * 2);
+        ctx.restore();
+      }
+    }
+  }
+
+  /**
+   * 过去：“现在”线以下渐渐淡成绢底，只留路边几笔断续的墨线，像画到这里收了笔。
+   */
+  private drawPast(ctx: CanvasRenderingContext2D, sky: Sky, look: Look) {
+    const { W, H, NOWY, T } = this;
+    const blank = pigment(mixc(SILK, sky.bot, 0.5), look);
+    const g = ctx.createLinearGradient(0, NOWY, 0, H);
+    g.addColorStop(0, rgba(blank, 0));
+    g.addColorStop(0.35, rgba(blank, 0.7));
+    g.addColorStop(1, rgba(blank, 0.94));
+    ctx.fillStyle = g;
+    ctx.fillRect(0, NOWY, W, H - NOWY);
+
+    const ink = pigment(INK, look);
+    ctx.save();
+    ctx.lineCap = 'round';
+    for (const side of [-1, 1] as const) {
+      let prev: [number, number] | null = null;
+      for (let z = 0.3; z < 1.05; z *= 1.02) {
+        const h = T + (z - 1) * TAU;
+        const [x, y] = this.project(this.edgeX(h, side), h);
+        // 墨色时有时无，越往下越淡
+        const a = 0.5 * smooth(0.3, 0.6, noise(h * 3, side + 41)) * smooth(0.3, 0.9, z);
+        if (prev && a > 0.02) {
+          ctx.strokeStyle = rgba(ink, a);
+          ctx.lineWidth = 0.6 + 1.2 * noise(h * 5, side + 51);
+          ctx.beginPath(); ctx.moveTo(prev[0], prev[1]); ctx.lineTo(x, y); ctx.stroke();
+        }
+        prev = [x, y];
+      }
+    }
+    ctx.restore();
+  }
+
+  /**
    * 车辙：路中间两道略深的带子，顺着路弯，钉在时间轴上（微微的起伏跟着时刻走）。
    */
   private drawRuts(ctx: CanvasRenderingContext2D, look: Look) {
@@ -245,7 +342,7 @@ export class HikeWorld implements World {
       let prev: [number, number, number, number] | null = null;
       for (let z = 0.45; z < 80; z *= 1.06) {
         const h = T + (z - 1) * TAU;
-        const c = bend(h) + off + 0.025 * Math.sin(h * 0.7 + off * 9);
+        const c = this.bend(h) + off + 0.025 * Math.sin(h * 0.7 + off * 9);
         const w = 0.028 * (1 + 0.25 * Math.sin(h * 1.3 + off * 5));
         const [lx, ly] = this.project(c - w, h), [rx, ry] = this.project(c + w, h);
         if (prev) {
@@ -280,7 +377,7 @@ export class HikeWorld implements World {
       if (z < 0.35) continue;
       // “现在”线以下离得太近，笔触会变大变呆板，淡掉
       const a = look.rutAlpha * smooth(2.5, 6, gap) * (0.35 + 0.65 * smooth(0.75, 1.05, z));
-      const b = bend(h);
+      const b = this.bend(h);
       const r = rng(k * 31 + 7);
       ctx.beginPath();
       const n = 1 + Math.floor(r() * 3);
@@ -346,7 +443,7 @@ export class HikeWorld implements World {
     for (const [ms, text] of marks) {
       if (ms === tomorrow && monday === tomorrow && text === '下周一') continue;
       const h = localHours(ms);
-      const [x, y, z] = this.project(edgeX(h, -1) - 0.07, h);
+      const [x, y, z] = this.project(this.edgeX(h, -1) - 0.07, h);
       if (z < 1.25 || z > 280) continue;
       if (Math.abs(y - lastY) < 13) continue; // 挤在一起就只留前一个
       lastY = y;
@@ -376,7 +473,7 @@ export class HikeWorld implements World {
       const s = localHours(ev.start), e = localHours(ev.end);
       if (e < T - 3 || s > T + TAU * 320) continue;
       const mid = (s + e) / 2;
-      const o = this.orb(bend(mid) + laneOf(ev.id), mid, e - s);
+      const o = this.orb(this.bend(mid) + laneOf(ev.id), mid, e - s);
       if (o) visible.push([ev, o]);
     }
     visible.sort((a, b) => b[1].z - a[1].z); // 远的先画
