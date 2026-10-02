@@ -8,14 +8,19 @@ import type { ArtInfo } from './art';
  * 素材自带颜色，不再整体染色；只按此刻的光处理，和 look.ts 里的 pigment() 一个意思：
  *   夜里：叠一层预先压暗的“夜里版”，按夜的程度混合；
  *   天色：在图片自己的像素上（source-atop）薄薄罩一层天色，远处和山脚罩得更多，淡进雾里。
- * 图片只解码一次；着色结果按“尺寸 + 光”缓存，光没变就直接贴上去。
- * 同一张图可以画成几种大小（比如几朵云），每种大小各留一份。
+ * 图片只解码一次；着色结果缓存起来，光没变就直接贴上去：
+ *   draw()      大小固定的（远山、雪山、云）：按“尺寸 + 光”缓存，每种大小各留一份；
+ *   drawSmall() 大小随透视一直在变的（岸上的树、草、牛羊）：按光着色一份原图大小的，
+ *               再预先缩出几级小图，画的时候挑刚好够大的那级，远处的小东西不闪。
  */
 export class Sprite {
   private day: HTMLImageElement | null = null;
   private night: HTMLCanvasElement | null = null;
   /** 尺寸 → 这个尺寸上次着色时的光、着色结果 */
   private cache = new Map<string, { light: string; canvas: HTMLCanvasElement }>();
+  /** drawSmall 用：原图大小的着色结果和逐级减半的小图 */
+  private mips: HTMLCanvasElement[] = [];
+  private mipLight = '';
 
   constructor(readonly info: ArtInfo, onReady: () => void) {
     const img = new Image();
@@ -44,11 +49,8 @@ export class Sprite {
     if (!this.day || !this.night) return;
     const dpr = ctx.getTransform().a || 1;
     const dw = Math.max(1, Math.round(w * dpr)), dh = Math.max(1, Math.round(h * dpr));
-    const k = (1 - look.daylight) * (1 - mist);
-    const t = look.tint;
     const size = `${dw}x${dh}`;
-    // 光的量化：变化小到看不出来时不重新着色
-    const light = `${Math.round(k * 48)}|${t.map(v => Math.round(v / 3)).join(',')}|${mist}|${foot}`;
+    const light = lightKey(look, mist, foot);
     let entry = this.cache.get(size);
     if (!entry || entry.light !== light) {
       if (!entry) {
@@ -58,40 +60,93 @@ export class Sprite {
         this.cache.set(size, entry);
       }
       entry.light = light;
-      const g = entry.canvas.getContext('2d')!;
-      g.globalCompositeOperation = 'source-over';
-      g.globalAlpha = 1;
-      g.clearRect(0, 0, dw, dh);
-      g.imageSmoothingQuality = 'high';
-      g.drawImage(this.day, 0, 0, dw, dh);
-      if (k > 0.01) {
-        g.globalAlpha = Math.min(1, k);
-        g.drawImage(this.night, 0, 0, dw, dh);
-        g.globalAlpha = 1;
-      }
-      // 天色：同 pigment()，先染 12%，再按雾的多少往天色靠
-      g.globalCompositeOperation = 'source-atop';
-      const base = 0.12 + 0.88 * mist;
-      const fog = g.createLinearGradient(0, 0, 0, dh);
-      fog.addColorStop(0, rgba(t, base));
-      fog.addColorStop(0.55, rgba(t, base));
-      fog.addColorStop(1, rgba(t, base + (1 - base) * foot));
-      g.fillStyle = fog;
-      g.fillRect(0, 0, dw, dh);
+      this.paintLit(entry.canvas, look, mist, foot);
     }
-    const a = opt.alpha ?? 1;
-    if (a < 1) { ctx.save(); ctx.globalAlpha *= a; }
-    if (opt.flip) {
-      ctx.save();
-      ctx.translate(x + w, y);
-      ctx.scale(-1, 1);
-      ctx.drawImage(entry.canvas, 0, 0, w, h);
-      ctx.restore();
-    } else {
-      ctx.drawImage(entry.canvas, x, y, w, h);
-    }
-    if (a < 1) ctx.restore();
+    blit(ctx, entry.canvas, x, y, w, h, opt.alpha ?? 1, !!opt.flip);
   }
+
+  /**
+   * 岸上的东西：底边的落地点（info.ax）对准 (x, y)，高 h（CSS 像素）。
+   * 近处的东西不罩雾；远处淡掉用 alpha。
+   */
+  drawSmall(ctx: CanvasRenderingContext2D, x: number, y: number, h: number, look: Look, alpha: number, flip: boolean) {
+    if (!this.day || !this.night) return;
+    const light = lightKey(look, 0, 0);
+    if (light !== this.mipLight || !this.mips.length) {
+      this.mipLight = light;
+      const base = (this.mips[0] ??= document.createElement('canvas'));
+      if (base.width !== this.info.w) { base.width = this.info.w; base.height = this.info.h; }
+      this.paintLit(base, look, 0, 0);
+      // 逐级减半，直到很小
+      let i = 1;
+      for (let w = base.width >> 1, hh = base.height >> 1; w >= 8 && hh >= 8; w >>= 1, hh >>= 1, i++) {
+        const c = (this.mips[i] ??= document.createElement('canvas'));
+        if (c.width !== w) { c.width = w; c.height = hh; }
+        const g = c.getContext('2d')!;
+        g.clearRect(0, 0, w, hh);
+        g.imageSmoothingQuality = 'high';
+        g.drawImage(this.mips[i - 1], 0, 0, w, hh);
+      }
+      this.mips.length = i;
+    }
+    // 挑刚好够大的那一级（屏幕像素不超过它的高度）
+    const need = h * (ctx.getTransform().a || 1);
+    let lv = this.mips.length - 1;
+    while (lv > 0 && this.mips[lv].height < need) lv--;
+    const w = h * this.aspect;
+    const ax = flip ? 1 - this.info.ax : this.info.ax;
+    blit(ctx, this.mips[lv], x - ax * w, y - h, w, h, alpha, flip);
+  }
+
+  /** 在 c 上画出此刻光线下的这张图（铺满 c） */
+  private paintLit(c: HTMLCanvasElement, look: Look, mist: number, foot: number) {
+    const dw = c.width, dh = c.height;
+    const k = (1 - look.daylight) * (1 - mist);
+    const t = look.tint;
+    const g = c.getContext('2d')!;
+    g.globalCompositeOperation = 'source-over';
+    g.globalAlpha = 1;
+    g.clearRect(0, 0, dw, dh);
+    g.imageSmoothingQuality = 'high';
+    g.drawImage(this.day!, 0, 0, dw, dh);
+    if (k > 0.01) {
+      g.globalAlpha = Math.min(1, k);
+      g.drawImage(this.night!, 0, 0, dw, dh);
+      g.globalAlpha = 1;
+    }
+    // 天色：同 pigment()，先染 12%，再按雾的多少往天色靠
+    g.globalCompositeOperation = 'source-atop';
+    const base = 0.12 + 0.88 * mist;
+    const fog = g.createLinearGradient(0, 0, 0, dh);
+    fog.addColorStop(0, rgba(t, base));
+    fog.addColorStop(0.55, rgba(t, base));
+    fog.addColorStop(1, rgba(t, base + (1 - base) * foot));
+    g.fillStyle = fog;
+    g.fillRect(0, 0, dw, dh);
+    g.globalCompositeOperation = 'source-over';
+  }
+}
+
+/** 光的量化：变化小到看不出来时不重新着色 */
+function lightKey(look: Look, mist: number, foot: number) {
+  const k = (1 - look.daylight) * (1 - mist);
+  return `${Math.round(k * 48)}|${look.tint.map(v => Math.round(v / 3)).join(',')}|${mist}|${foot}`;
+}
+
+function blit(ctx: CanvasRenderingContext2D, img: CanvasImageSource, x: number, y: number, w: number, h: number, alpha: number, flip: boolean) {
+  if (alpha < 0.01) return;
+  const prev = ctx.globalAlpha;
+  ctx.globalAlpha = prev * alpha;
+  if (flip) {
+    ctx.save();
+    ctx.translate(x + w, y);
+    ctx.scale(-1, 1);
+    ctx.drawImage(img, 0, 0, w, h);
+    ctx.restore();
+  } else {
+    ctx.drawImage(img, x, y, w, h);
+  }
+  ctx.globalAlpha = prev;
 }
 
 /** 夜里版：每个通道按 NIGHT_KEEP 压暗（保留色相，略偏青），透明度不变 */

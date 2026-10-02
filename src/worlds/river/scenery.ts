@@ -16,6 +16,8 @@ import { ART } from './art';
 const SLOT = 0.5;
 /** 比这更远的景物不画（已经挤在地平线的雾里） */
 const FAR_Z = 40;
+/** 贴地的东西（小溪、草地晕染）排序时加上这个数，总在立着的树、草、牛羊之前画 */
+const FLAT = 1e4;
 
 type Project = (X: number, h: number) => [number, number, number];
 
@@ -43,6 +45,11 @@ export class Scenery {
   private ranges: Sprite[];
   private snow: Sprite;
   private cloudArt: Sprite[];
+  /** 岸上的精灵图：阔叶树、松、柳；三种草；低头吃草和抬头的水牛；羊 */
+  private treeArt: Sprite[];
+  private grassArt: Sprite[];
+  private buffaloArt: Sprite[];
+  private sheepArt: Sprite;
   /** 三层远山的轮廓高度（像素），每 3 像素一个采样，从远到近 */
   private ridges: Float32Array[] = [];
   /** 河流尽头的雪山：轮廓高度和峰高 */
@@ -54,6 +61,10 @@ export class Scenery {
     this.ranges = RANGES.map(r => new Sprite(r.art, invalidate));
     this.snow = new Sprite(ART.peak1, invalidate);
     this.cloudArt = [ART.cloud1, ART.cloud2].map(a => new Sprite(a, invalidate));
+    this.treeArt = [ART.treeBroad1, ART.treePine1, ART.treeWillow1].map(a => new Sprite(a, invalidate));
+    this.grassArt = [ART.grass1, ART.grass2, ART.grass3].map(a => new Sprite(a, invalidate));
+    this.buffaloArt = [ART.buffalo1, ART.buffalo2].map(a => new Sprite(a, invalidate));
+    this.sheepArt = new Sprite(ART.sheep1, invalidate);
   }
 
   resize(W: number, H: number, HZ: number) {
@@ -277,6 +288,8 @@ export class Scenery {
     const wool = pigment(SHELL_WHITE, look, 0.1);
     const leaves: [RGB, RGB] = [pigment(MALACHITE, look), pigment(mixc(AZURITE, MALACHITE, 0.3), look)];
     const items: [number, () => void][] = [];
+    // 精灵图都加载好了就用画好的，否则用代码画的兜底；摆放完全一样
+    const art = [...this.treeArt, ...this.grassArt, ...this.buffaloArt, this.sheepArt].every(s => s.ready);
 
     const k0 = Math.floor((T - tau * 0.7 - 2) / SLOT), k1 = Math.ceil((T + tau * (FAR_Z - 1)) / SLOT);
     for (let k = k0; k <= k1; k++) {
@@ -309,14 +322,14 @@ export class Scenery {
             right.push(at(d + th * w, h - (tx * w) / 0.3));
           }
           const zNear = Math.min(...left.map(p => p[2]), ...right.map(p => p[2]));
-          if (zNear > 0.3) items.push([left[0][2] + 0.001, () => stream(ctx, left, right, ink, water, fade)]);
+          if (zNear > 0.3) items.push([FLAT + left[0][2], () => stream(ctx, left, right, ink, water, fade)]);
         }
 
         // 草地的淡墨晕染
         if (r() < 0.55) {
           const [x, y, z] = at(0.1 + r() * 1.3, h0 + r() * SLOT);
           const s = this.scale(z);
-          if (s && z < FAR_Z) items.push([z + 0.002, () => {
+          if (s && z < FAR_Z) items.push([FLAT + z, () => {
             ctx.fillStyle = rgba(wash, 0.16 * fade(z));
             ellipsePath(ctx, x, y, 0.22 * s, 0.03 * s);
             ctx.fill();
@@ -331,7 +344,11 @@ export class Scenery {
           for (let i = 0; i < n; i++) {
             const [x, y, z] = at(d + i * (0.07 + r() * 0.1), h0 + (r() - 0.5) * 0.25);
             const s = this.scale(z);
-            if (s && z < FAR_Z && s * 0.2 > 2) items.push([z, () => tree(ctx, x, y, s, ink, leaves, fade(z), rng(seed + i))]);
+            if (s && z < FAR_Z && s * 0.2 > 2) {
+              items.push([z, art
+                ? () => this.treeSprite(ctx, x, y, s, d, look, fade(z), rng(seed + i))
+                : () => tree(ctx, x, y, s, ink, leaves, fade(z), rng(seed + i))]);
+            }
           }
         } else if (kind < 0.58) {
           // 一丛丛草
@@ -339,7 +356,11 @@ export class Scenery {
           for (let i = 0; i < n; i++) {
             const [x, y, z] = at(0.03 + r() * 1.1, h0 + r() * SLOT);
             const s = this.scale(z);
-            if (s && z < FAR_Z * 0.5 && s * 0.04 > 1.5) items.push([z, () => tuft(ctx, x, y, s, grass, fade(z), rng(seed + i))]);
+            if (s && z < FAR_Z * 0.5 && s * 0.04 > 1.5) {
+              items.push([z, art
+                ? () => this.grassSprite(ctx, x, y, s, look, fade(z), rng(seed + i))
+                : () => tuft(ctx, x, y, s, grass, fade(z), rng(seed + i))]);
+            }
           }
         } else if (kind < 0.65) {
           // 一两头牛
@@ -347,7 +368,11 @@ export class Scenery {
           for (let i = 0; i < n; i++) {
             const [x, y, z] = at(d + i * 0.12, h0 + i * 0.15);
             const s = this.scale(z);
-            if (s && z < FAR_Z * 0.6 && s * 0.07 > 3) items.push([z, () => cow(ctx, x, y, s, ink, fade(z), rng(seed + i))]);
+            if (s && z < FAR_Z * 0.6 && s * 0.07 > 3) {
+              items.push([z, art
+                ? () => this.buffaloSprite(ctx, x, y, s, look, fade(z), rng(seed + i))
+                : () => cow(ctx, x, y, s, ink, fade(z), rng(seed + i))]);
+            }
           }
         } else if (kind < 0.73) {
           // 一小群羊
@@ -355,7 +380,11 @@ export class Scenery {
           for (let i = 0; i < n; i++) {
             const [x, y, z] = at(d + (r() - 0.5) * 0.25, h0 + (r() - 0.5) * 0.35);
             const s = this.scale(z);
-            if (s && z < FAR_Z * 0.6 && s * 0.05 > 2.5) items.push([z, () => sheep(ctx, x, y, s, ink, wool, fade(z), rng(seed + i))]);
+            if (s && z < FAR_Z * 0.6 && s * 0.05 > 2.5) {
+              items.push([z, art
+                ? () => this.sheepSprite(ctx, x, y, s, look, fade(z), rng(seed + i))
+                : () => sheep(ctx, x, y, s, ink, wool, fade(z), rng(seed + i))]);
+            }
           }
         }
       }
@@ -366,6 +395,36 @@ export class Scenery {
     ctx.lineCap = 'round';
     for (const [, paint] of items) paint();
     ctx.restore();
+  }
+
+  /*
+   * 画好的岸上景物：底边的落地点对准地面上那一点，按透视缩放（s = 深度 z 处一个世界单位的像素数），
+   * 远处用 a 淡掉。样子由 r（这一处景物自己的随机数）决定，同一时刻永远一样。
+   */
+
+  /** 树：离河近的多是柳，远些是阔叶树和松 */
+  private treeSprite(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, d: number, look: Look, a: number, r: () => number) {
+    const u = r();
+    const kind = d < 0.35 ? (u < 0.55 ? 2 : u < 0.8 ? 0 : 1) : (u < 0.5 ? 0 : u < 0.85 ? 1 : 2);
+    const h = (0.2 + r() * 0.12) * s;
+    this.treeArt[kind].drawSmall(ctx, x, y, h, look, a, r() < 0.5);
+  }
+
+  private grassSprite(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, look: Look, a: number, r: () => number) {
+    const g = this.grassArt[Math.floor(r() * 3)];
+    g.drawSmall(ctx, x, y, (0.045 + r() * 0.035) * s, look, a, r() < 0.5);
+  }
+
+  /** 水牛：多半低头吃草，偶尔抬着头；朝向随机 */
+  private buffaloSprite(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, look: Look, a: number, r: () => number) {
+    const b = this.buffaloArt[r() < 0.6 ? 0 : 1];
+    const w = (0.095 + r() * 0.02) * s;
+    b.drawSmall(ctx, x, y, w / b.aspect, look, a, r() < 0.5);
+  }
+
+  private sheepSprite(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, look: Look, a: number, r: () => number) {
+    const w = (0.052 + r() * 0.012) * s;
+    this.sheepArt.drawSmall(ctx, x, y, w / this.sheepArt.aspect, look, a, r() < 0.5);
   }
 
   /** 深度 z 处，一个世界单位有多少像素；太近（在“现在”线后面很远）就不画 */
