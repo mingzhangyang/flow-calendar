@@ -355,9 +355,9 @@ export class Scenery {
         const seed = Math.floor(r() * 1e9);
         if (kind < 0.32) {
           // 一到三棵树
-          const n = 1 + Math.floor(r() * 3), d = 0.08 + r() * 1.2;
+          const n = 1 + Math.floor(r() * 3), d = 0.12 + r() * 1.2;
           for (let i = 0; i < n; i++) {
-            const [x, y, z] = at(d + i * (0.07 + r() * 0.1), h0 + (r() - 0.5) * 0.25);
+            const [x, y, z] = at(d + i * (0.15 + r() * 0.2), h0 + (r() - 0.5) * 0.5);
             const s = this.scale(z);
             if (s && z < FAR_Z && s * 0.2 > 2) {
               items.push([z, art
@@ -421,7 +421,8 @@ export class Scenery {
   private treeSprite(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, d: number, look: Look, a: number, r: () => number) {
     const u = r();
     const kind = d < 0.35 ? (u < 0.55 ? 2 : u < 0.8 ? 0 : 1) : (u < 0.5 ? 0 : u < 0.85 ? 1 : 2);
-    const h = (0.2 + r() * 0.12) * s;
+    // 树高大约和路宽相当（路宽 1 个单位）
+    const h = (0.45 + r() * 0.25) * s;
     this.treeArt[kind].drawSmall(ctx, x, y, h, look, a, r() < 0.5);
   }
 
