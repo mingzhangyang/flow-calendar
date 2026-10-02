@@ -4,7 +4,7 @@
  *      按与底色的色差给透明度，边缘柔和过渡，并去掉边缘残留的底色。
  *   2. 山脚的白雾改成按高度的透明渐变，让山脚融进画面里的地平线雾。
  *   3. 裁掉上下空白，按屏幕实际用到的最大像素缩小，转 WebP。
- * 远足的输出到 src/worlds/hike/art/，登山的输出到 src/worlds/climb/art/，农场的输出到 src/worlds/farm/art/，
+ * 远足的输出到 src/worlds/hike/art/，登山的输出到 src/worlds/climb/art/，
  * 并各自生成 index.ts（图片地址和几何信息）。
  * 原图不动。用法：npm run art（只处理某一组：npm run art -- climb）
  */
@@ -51,18 +51,9 @@ const CLIMB = [
   { name: 'cloud-band-1', width: 1536, lo: 3, hi: 30 },
 ];
 
-/** 农场：农夫、地块贴图（tile：铺满整张，不抠底，只缩小） */
-const FARM = [
-  { name: 'farmer-walk-1', width: 160, ground: true, flood: false },
-  { name: 'farmer-hoe-1', width: 192, ground: true, flood: false },
-  { name: 'plot-bare', width: 256, tile: true },
-  { name: 'plot-tilled', width: 256, tile: true },
-];
-
 const GROUPS = [
   { id: 'hike', src: 'assets/art', out: 'src/worlds/hike/art', jobs: HIKE },
   { id: 'climb', src: 'assets/art/mountain', out: 'src/worlds/climb/art', jobs: CLIMB },
-  { id: 'farm', src: 'assets/art/farm', out: 'src/worlds/farm/art', jobs: FARM },
 ];
 
 /** 色差低于 LO 全透明，高于 HI 不透明；泛洪只穿过色差低于 HI 的像素 */
@@ -73,15 +64,7 @@ const smooth = (a, b, x) => {
   return t * t * (3 - 2 * t);
 };
 
-async function prepare(SRC, OUT, { name, fade, width, ground = false, flood = true, lo = LO, hi = HI, tile = false }) {
-  if (tile) {
-    // 贴图铺满整张，没有底色可抠，只缩小
-    const img = sharp(`${SRC}/${name}.png`).removeAlpha();
-    const { width: w0, height: h0 } = await img.metadata();
-    const height = Math.round((h0 * width) / w0);
-    await img.resize({ width, height }).webp({ quality: 82, effort: 6 }).toFile(`${OUT}/${name}.webp`);
-    return { name, width, height, peak: 0, ax: 0.5, bg: [0, 0, 0] };
-  }
+async function prepare(SRC, OUT, { name, fade, width, ground = false, flood = true, lo = LO, hi = HI }) {
   const { data, info } = await sharp(`${SRC}/${name}.png`).removeAlpha().raw().toBuffer({ resolveWithObject: true });
   const W = info.width, H = info.height, N = W * H;
 

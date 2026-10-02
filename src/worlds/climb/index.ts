@@ -978,7 +978,7 @@ export function subLabel(ev: EventView): string {
   return range;
 }
 
-export const colorOf = (title: string) => PALETTE[hashStr(title) % PALETTE.length];
+const colorOf = (title: string) => PALETTE[hashStr(title) % PALETTE.length];
 
 /** n 能被 2 整除几次（0 算很多次） */
 function trailingZeros(n: number): number {

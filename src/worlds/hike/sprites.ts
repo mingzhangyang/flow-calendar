@@ -70,30 +70,7 @@ export class Sprite {
    * 近处的东西不罩雾；远处淡掉用 alpha。
    */
   drawSmall(ctx: CanvasRenderingContext2D, x: number, y: number, h: number, look: Look, alpha: number, flip: boolean) {
-    if (!this.ensureMips(look)) return;
-    // 挑刚好够大的那一级（屏幕像素不超过它的高度）
-    const need = h * (ctx.getTransform().a || 1);
-    let lv = this.mips.length - 1;
-    while (lv > 0 && this.mips[lv].height < need) lv--;
-    const w = h * this.aspect;
-    const ax = flip ? 1 - this.info.ax : this.info.ax;
-    blit(ctx, this.mips[lv], x - ax * w, y - h, w, h, alpha, flip);
-  }
-
-  /**
-   * 贴图（农场的地块）：此刻光线下着好色的图，挑宽度刚好不小于 needPx（设备像素）的那一级。
-   * 还没加载好时返回 null。
-   */
-  litLevel(look: Look, needPx: number): HTMLCanvasElement | null {
-    if (!this.ensureMips(look)) return null;
-    let lv = this.mips.length - 1;
-    while (lv > 0 && this.mips[lv].width < needPx) lv--;
-    return this.mips[lv];
-  }
-
-  /** 按光着色一份原图大小的，再逐级减半；光没变就不重做 */
-  private ensureMips(look: Look): boolean {
-    if (!this.day || !this.night) return false;
+    if (!this.day || !this.night) return;
     const light = lightKey(look, 0, 0);
     if (light !== this.mipLight || !this.mips.length) {
       this.mipLight = light;
@@ -112,7 +89,13 @@ export class Sprite {
       }
       this.mips.length = i;
     }
-    return true;
+    // 挑刚好够大的那一级（屏幕像素不超过它的高度）
+    const need = h * (ctx.getTransform().a || 1);
+    let lv = this.mips.length - 1;
+    while (lv > 0 && this.mips[lv].height < need) lv--;
+    const w = h * this.aspect;
+    const ax = flip ? 1 - this.info.ax : this.info.ax;
+    blit(ctx, this.mips[lv], x - ax * w, y - h, w, h, alpha, flip);
   }
 
   /** 在 c 上画出此刻光线下的这张图（铺满 c） */
