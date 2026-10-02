@@ -967,7 +967,7 @@ function summitSub(s: Summit, now: number): string {
 }
 
 /** 标签第二行：临近和进行中提醒还要准备几项；记录显示结论的开头 */
-function subLabel(ev: EventView): string {
+export function subLabel(ev: EventView): string {
   if (ev.state === 'ended' && ev.outcome) {
     const line = ev.outcome.split('\n')[0];
     return line.length > 12 ? line.slice(0, 11) + '…' : line;
@@ -978,7 +978,7 @@ function subLabel(ev: EventView): string {
   return range;
 }
 
-const colorOf = (title: string) => PALETTE[hashStr(title) % PALETTE.length];
+export const colorOf = (title: string) => PALETTE[hashStr(title) % PALETTE.length];
 
 /** n 能被 2 整除几次（0 算很多次） */
 function trailingZeros(n: number): number {
