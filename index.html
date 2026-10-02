@@ -13,7 +13,39 @@
   <button id="viewing" class="viewing" type="button">
     <span class="when"></span><span class="back">回到现在</span>
   </button>
+  <button id="add" class="add" type="button"><span aria-hidden="true">＋</span>新建</button>
+  <p id="note" class="note" hidden></p>
 </main>
+<dialog id="sheet" class="sheet">
+  <section class="detail" hidden>
+    <p class="state"></p>
+    <h2 class="title"></h2>
+    <p class="when"></p>
+    <p class="notes"></p>
+    <div class="actions">
+      <button type="button" class="del">删除</button>
+      <span class="grow"></span>
+      <button type="button" class="close">关闭</button>
+      <button type="button" class="edit primary">编辑</button>
+    </div>
+  </section>
+  <form class="form" hidden novalidate>
+    <h2 class="form-title">新建日程</h2>
+    <label>标题<input name="title" maxlength="100" autocomplete="off" enterkeyhint="done"></label>
+    <label>日期<input name="date" type="date"></label>
+    <div class="row">
+      <label>开始<input name="start" type="time"></label>
+      <label>结束<input name="end" type="time"></label>
+    </div>
+    <label>备注<textarea name="notes" rows="3" maxlength="2000"></textarea></label>
+    <p class="error" role="alert"></p>
+    <div class="actions">
+      <span class="grow"></span>
+      <button type="button" class="cancel">取消</button>
+      <button type="submit" class="primary">保存</button>
+    </div>
+  </form>
+</dialog>
 <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

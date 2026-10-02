@@ -2,8 +2,9 @@ import './styles.css';
 import type { CalEvent, Frame } from './model/types';
 import { Viewport } from './model/viewport';
 import { nextStateChange, withStates } from './model/states';
-import { fmtDay, fmtTime, startOfDay, HOUR, MINUTE } from './model/time';
-import { demoEvents } from './model/demo';
+import { fmtDay, fmtTime, HOUR, MINUTE } from './model/time';
+import { openStore } from './data/store';
+import { Sheet } from './ui/sheet';
 import { type Theme, themeAt } from './model/daylight';
 import type { World } from './worlds/world';
 import { HikeWorld } from './worlds/hike';
@@ -17,9 +18,40 @@ viewport.reducedMotion = motionQuery.matches;
 motionQuery.addEventListener('change', () => { viewport.reducedMotion = motionQuery.matches; });
 const world: World = new HikeWorld(() => requestRender());
 
-// 第 3 步换成本地数据库
-let events: CalEvent[] = demoEvents(Date.now());
-let eventsDay = startOfDay(Date.now());
+/* ---------- 日程数据 ----------
+ * 存在本机（IndexedDB）。启动时全部读进来，改动后重新读一遍。
+ */
+let events: CalEvent[] = [];
+let sheet: Sheet | null = null;
+const note = document.getElementById('note') as HTMLElement;
+
+openStore().then(async store => {
+  events = await store.all();
+  sheet = new Sheet({
+    store,
+    find: id => events.find(e => e.id === id),
+    async changed() {
+      events = await store.all();
+      showNote(store.persistent);
+      requestRender();
+    },
+  });
+  showNote(store.persistent);
+  requestRender();
+});
+
+function showNote(persistent: boolean) {
+  const text = !persistent
+    ? '这个浏览器不能在本机保存，关掉页面后日程不会保留。'
+    : events.length ? '' : '还没有日程。点右下角的“新建”添加一个。';
+  note.textContent = text;
+  note.hidden = !text;
+}
+
+document.getElementById('add')!.addEventListener('click', () => {
+  // 新建的日程默认放在正在看的时间
+  sheet?.openNew(viewport.viewTime(Date.now()));
+});
 
 /* ---------- 尺寸 ---------- */
 
@@ -59,10 +91,6 @@ function requestRender() {
 }
 
 function makeFrame(now: number): Frame {
-  if (startOfDay(now) !== eventsDay) {
-    events = demoEvents(now);
-    eventsDay = startOfDay(now);
-  }
   return { now, view: viewport.viewTime(now), events: withStates(events, now) };
 }
 
@@ -106,6 +134,8 @@ document.addEventListener('visibilitychange', () => {
  */
 let dragId: number | null = null;
 let lastY = 0;
+/** 按下的位置和时刻：没怎么动就松手，算作点一下 */
+let down = { x: 0, y: 0, t: 0, moved: 0 };
 
 const localY = (e: { clientY: number }) => e.clientY - canvas.getBoundingClientRect().top;
 
@@ -113,6 +143,7 @@ canvas.addEventListener('pointerdown', e => {
   if (dragId !== null || (e.pointerType === 'mouse' && e.button !== 0)) return;
   dragId = e.pointerId;
   lastY = localY(e);
+  down = { x: e.clientX, y: e.clientY, t: performance.now(), moved: 0 };
   canvas.setPointerCapture(e.pointerId);
   canvas.classList.add('dragging');
   viewport.grab(performance.now());
@@ -122,6 +153,7 @@ canvas.addEventListener('pointerdown', e => {
 canvas.addEventListener('pointermove', e => {
   if (e.pointerId !== dragId) return;
   const y = localY(e);
+  down.moved = Math.max(down.moved, Math.hypot(e.clientX - down.x, e.clientY - down.y));
   viewport.dragBy(world.dragHours(lastY, y - lastY), performance.now());
   lastY = y;
   requestRender();
@@ -133,6 +165,12 @@ function endDrag(e: PointerEvent) {
   canvas.classList.remove('dragging');
   viewport.release(performance.now());
   requestRender();
+  // 点一下光点：打开详情
+  if (e.type === 'pointerup' && down.moved < 8 && performance.now() - down.t < 600) {
+    const r = canvas.getBoundingClientRect();
+    const id = world.hitTest(e.clientX - r.left, e.clientY - r.top);
+    if (id) sheet?.openDetail(id);
+  }
 }
 canvas.addEventListener('pointerup', endDrag);
 canvas.addEventListener('pointercancel', endDrag);
@@ -148,7 +186,7 @@ canvas.addEventListener('wheel', e => {
 
 const KEYS: Record<string, number> = { ArrowDown: 1, ArrowUp: -1, PageDown: 24, PageUp: -24 };
 window.addEventListener('keydown', e => {
-  if (e.altKey || e.ctrlKey || e.metaKey || dragId !== null) return;
+  if (e.altKey || e.ctrlKey || e.metaKey || dragId !== null || sheet?.isOpen) return;
   if (e.target instanceof HTMLElement && e.target.closest('input, textarea, select, button')) return;
   const t = performance.now();
   if (e.key in KEYS) viewport.nudge(KEYS[e.key], t);
