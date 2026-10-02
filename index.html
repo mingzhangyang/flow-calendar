@@ -20,8 +20,11 @@
 <dialog id="list" class="list" aria-label="日程列表">
   <header>
     <h2 tabindex="-1">日程列表</h2>
+    <button type="button" class="import">导入日历</button>
     <button type="button" class="close">回到画面</button>
+    <input type="file" class="import-file" accept=".ics,text/calendar" hidden>
   </header>
+  <p class="msg" role="status" hidden></p>
   <input class="search" type="search" placeholder="搜索标题、备注、准备事项、结论" aria-label="搜索日程" autocomplete="off" enterkeyhint="search">
   <div class="tabs" role="group" aria-label="显示哪些日程">
     <button type="button" data-tab="next" aria-pressed="true">接下来</button>

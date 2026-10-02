@@ -1,6 +1,6 @@
 import type { CalEvent, PrepItem } from '../model/types';
 import { prepLeft, stateOf } from '../model/states';
-import { DAY, HOUR, MINUTE, fmtDay, fmtTime, startOfDay } from '../model/time';
+import { DAY, HOUR, MINUTE, fmtDay, fmtTime, isAllDay, startOfDay } from '../model/time';
 import { type Store, newId } from '../data/store';
 
 /**
@@ -174,7 +174,9 @@ export class Sheet {
     const f = this.form.elements as unknown as Record<'title' | 'date' | 'start' | 'end' | 'notes' | 'prep', HTMLInputElement>;
     const title = f.title.value.trim();
     const start = parseLocal(f.date.value, f.start.value);
-    const end = parseLocal(f.date.value, f.end.value);
+    let end = parseLocal(f.date.value, f.end.value);
+    // 结束写 0:00 表示到第二天零点（全天日程、到午夜结束的日程）
+    if (start !== null && end !== null && end <= start && /^0?0:00/.test(f.end.value)) end += DAY;
     let problem = '';
     if (!title) problem = '请填写标题。';
     else if (start === null || end === null) problem = '请填写日期和时间。';
@@ -224,6 +226,10 @@ export class Sheet {
 /* ---------- 文字 ---------- */
 
 function fmtWhen(start: number, end: number): string {
+  if (isAllDay(start, end)) {
+    const days = Math.round((end - start) / DAY);
+    return days > 1 ? `${fmtDay(start)} 起，全天，共 ${days} 天` : `${fmtDay(start)}  全天`;
+  }
   if (startOfDay(start) === startOfDay(end - 1)) return `${fmtDay(start)}  ${fmtTime(start)}–${fmtTime(end)}`;
   return `${fmtDay(start)} ${fmtTime(start)} – ${fmtDay(end)} ${fmtTime(end)}`;
 }

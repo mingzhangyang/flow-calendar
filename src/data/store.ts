@@ -15,6 +15,16 @@ export interface Store {
   all(): Promise<CalEvent[]>;
   put(ev: CalEvent): Promise<void>;
   remove(id: string): Promise<void>;
+  /** 导入：同一个 id 的覆盖，但保留已经写下的准备事项和结论。返回新加了几条、更新了几条 */
+  importMany(evs: CalEvent[]): Promise<{ added: number; updated: number }>;
+}
+
+function merge(ev: CalEvent, old: CalEvent | undefined): CalEvent {
+  if (!old) return ev;
+  const next = { ...ev };
+  if (old.prep) next.prep = old.prep;
+  if (old.outcome) next.outcome = old.outcome;
+  return next;
 }
 
 export async function openStore(): Promise<Store> {
@@ -36,6 +46,17 @@ function idbStore(db: IDBPDatabase<Schema>): Store {
     all: () => db.getAllFromIndex('events', 'start'),
     put: async ev => { await db.put('events', ev); },
     remove: id => db.delete('events', id),
+    async importMany(evs) {
+      const tx = db.transaction('events', 'readwrite');
+      let added = 0, updated = 0;
+      for (const ev of evs) {
+        const old = await tx.store.get(ev.id);
+        if (old) updated++; else added++;
+        await tx.store.put(merge(ev, old));
+      }
+      await tx.done;
+      return { added, updated };
+    },
   };
 }
 
@@ -46,6 +67,15 @@ function memoryStore(): Store {
     all: async () => [...map.values()].sort((a, b) => a.start - b.start),
     put: async ev => { map.set(ev.id, ev); },
     remove: async id => { map.delete(id); },
+    async importMany(evs) {
+      let added = 0, updated = 0;
+      for (const ev of evs) {
+        const old = map.get(ev.id);
+        if (old) updated++; else added++;
+        map.set(ev.id, merge(ev, old));
+      }
+      return { added, updated };
+    },
   };
 }
 

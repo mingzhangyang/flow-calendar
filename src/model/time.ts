@@ -38,3 +38,17 @@ export function fmtDay(ms: number): string {
   const d = new Date(ms);
   return `${d.getMonth() + 1}月${d.getDate()}日 ${WEEKDAYS[d.getDay()]}`;
 }
+
+/** 从某天零点到之后某天零点：全天日程 */
+export function isAllDay(start: number, end: number): boolean {
+  return end > start && start === startOfDay(start) && end === startOfDay(end);
+}
+
+/** 时间段的写法：全天的写“全天”，其他写“9:00–10:00” */
+export function fmtSpan(start: number, end: number): string {
+  if (isAllDay(start, end)) {
+    const days = Math.round((end - start) / DAY);
+    return days > 1 ? `全天（${days} 天）` : '全天';
+  }
+  return fmtRange(start, end);
+}

@@ -39,7 +39,30 @@ openStore().then(async store => {
       requestRender();
     },
   });
-  list = new ListView({ events: () => events, openDetail: id => sheet?.openDetail(id) });
+  list = new ListView({
+    events: () => events,
+    openDetail: id => sheet?.openDetail(id),
+    async importFile(file) {
+      let result;
+      try {
+        const { parseIcs } = await import('./data/ics');
+        result = parseIcs(await file.text());
+      } catch {
+        return '这个文件读不出来。请选一个 .ics 日历文件（比如从 Google 日历导出的）。';
+      }
+      if (!result.events.length) return '文件里没有找到日程。';
+      const { added, updated } = await store.importMany(result.events);
+      events = await store.all();
+      showNote(store.persistent);
+      requestRender();
+      let text = `导入好了：新加 ${added} 条`;
+      if (updated) text += `，更新 ${updated} 条（已写的准备事项和结论都保留）`;
+      text += '。';
+      if (result.recurring) text += `其中 ${result.recurring} 个重复日程，展开了往回 30 天到往后一年。`;
+      if (result.dropped) text += `太多了，有 ${result.dropped} 次没有导入。`;
+      return text;
+    },
+  });
   showNote(store.persistent);
   requestRender();
 });
@@ -47,7 +70,7 @@ openStore().then(async store => {
 function showNote(persistent: boolean) {
   const text = !persistent
     ? '这个浏览器不能在本机保存，关掉页面后日程不会保留。'
-    : events.length ? '' : '还没有日程。点右下角的“新建”添加一个。';
+    : events.length ? '' : '还没有日程。点右下角的“新建”添加一个，或者在“列表”里导入日历文件。';
   note.textContent = text;
   note.hidden = !text;
 }

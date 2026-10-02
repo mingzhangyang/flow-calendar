@@ -1,6 +1,6 @@
 import type { CalEvent } from '../model/types';
 import { prepLeft, stateOf } from '../model/states';
-import { DAY, MINUTE, fmtDay, fmtRange, startOfDay } from '../model/time';
+import { DAY, MINUTE, fmtDay, fmtSpan, startOfDay } from '../model/time';
 
 /**
  * 普通的列表视图：给读屏软件用，也方便快速查找。
@@ -10,6 +10,8 @@ import { DAY, MINUTE, fmtDay, fmtRange, startOfDay } from '../model/time';
 export interface ListDeps {
   events(): CalEvent[];
   openDetail(id: string): void;
+  /** 导入一个 .ics 文件，返回给人看的结果 */
+  importFile(file: File): Promise<string>;
 }
 
 type Tab = 'next' | 'past';
@@ -27,6 +29,22 @@ export class ListView {
   constructor(private deps: ListDeps) {
     this.dlg.querySelector('.close')!.addEventListener('click', () => this.dlg.close());
     this.search.addEventListener('input', () => this.render());
+    const file = this.dlg.querySelector('.import-file') as HTMLInputElement;
+    const btn = this.dlg.querySelector('.import') as HTMLButtonElement;
+    btn.addEventListener('click', () => file.click());
+    file.addEventListener('change', async () => {
+      const f = file.files?.[0];
+      file.value = '';
+      if (!f) return;
+      btn.disabled = true;
+      this.say('正在导入…');
+      try {
+        this.say(await this.deps.importFile(f));
+      } finally {
+        btn.disabled = false;
+        this.render();
+      }
+    });
     for (const b of this.tabs) b.addEventListener('click', () => this.setTab(b.dataset.tab as Tab));
     this.body.addEventListener('click', e => {
       const row = (e.target as HTMLElement).closest<HTMLElement>('[data-id]');
@@ -37,6 +55,7 @@ export class ListView {
   get isOpen() { return this.dlg.open; }
 
   open() {
+    this.say('');
     this.render();
     if (!this.dlg.open) this.dlg.showModal();
     // 有鼠标的设备直接聚焦搜索框；手机上不弹出键盘，先停在标题上
@@ -54,6 +73,12 @@ export class ListView {
 
   forceRefresh() {
     if (this.dlg.open) this.render();
+  }
+
+  private say(text: string) {
+    const msg = this.dlg.querySelector('.msg') as HTMLElement;
+    msg.textContent = text;
+    msg.hidden = !text;
   }
 
   private setTab(t: Tab) {
@@ -120,7 +145,7 @@ function row(ev: CalEvent, now: number): HTMLLIElement {
 
   const time = document.createElement('span');
   time.className = 'time';
-  time.textContent = fmtRange(ev.start, ev.end);
+  time.textContent = fmtSpan(ev.start, ev.end);
   const main = document.createElement('span');
   main.className = 'main';
   const title = document.createElement('span');

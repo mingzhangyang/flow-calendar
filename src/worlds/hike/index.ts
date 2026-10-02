@@ -1,6 +1,6 @@
 import type { World } from '../world';
 import type { EventView, Frame } from '../../model/types';
-import { addDays, fmtDay, fmtRange, fmtTime, localHours, startOfDay } from '../../model/time';
+import { addDays, fmtDay, fmtSpan, fmtTime, localHours, startOfDay } from '../../model/time';
 import { prepLeft } from '../../model/states';
 import {
   type OrbGeom, type RGB, PALETTE, SANS, clamp, drawLabel, drawOrb, ellipsePath, hashStr,
@@ -547,7 +547,7 @@ export class HikeWorld implements World {
 
 /** 标签第二行：临近和进行中提醒还要准备几项；记录显示结论的开头 */
 function subLabel(ev: EventView): string {
-  const range = fmtRange(ev.start, ev.end);
+  const range = fmtSpan(ev.start, ev.end);
   if (ev.state === 'ended' && ev.outcome) {
     const line = ev.outcome.split('\n')[0];
     return line.length > 16 ? line.slice(0, 15) + '…' : line;

@@ -197,3 +197,6 @@ body { overflow: hidden; -webkit-font-smoothing: antialiased; overscroll-behavio
 }
 .list .empty { margin: 32px 0; text-align: center; color: var(--ink-soft); }
 .list h2:focus { outline: none; }
+.list .msg { margin: 0 0 12px; padding: 8px 12px; border-radius: 10px; background: rgba(127, 127, 127, .1); font-size: 14px; }
+.list button:disabled { opacity: .5; cursor: default; }
+@media (max-width: 420px) { .list header h2 { font-size: 18px; } .list header button { padding: 0 10px; } }
