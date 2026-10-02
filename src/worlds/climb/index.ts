@@ -634,14 +634,23 @@ export class ClimbWorld implements World {
     const SLOT = 9;
     const haze = mixc(sky.bot, SHELL_WHITE, 0.25 * look.daylight);
     const artReady = this.art.band.ready && this.art.clouds.every(c => c.ready);
+    // 远处一格挤得只剩几个像素时，没必要格格都画：按挤的程度隔一格、隔三格……只留一部分。
+    // 留哪些由格子的编号定（能被 2^k 整除的留下），拖动时不会换来换去；快要被省掉的先慢慢淡掉。
+    const minGap = W * 0.06;
     for (let n = Math.floor((T + 4) / SLOT); n * SLOT < T + 62 * 24; n++) {
       const r = rng(n * 17 + 900);
       const h = n * SLOT + r() * SLOT;
       const dt = h - T;
-      const a = smooth(6, 48, dt) * (1 - 0.85 * this.e);
+      let a = smooth(6, 48, dt) * (1 - 0.85 * this.e);
       if (a < 0.02) continue;
       const [x, y] = this.at(h);
       if (x > W + 60) continue;
+      const gap = Math.max(0.01, this.at(n * SLOT + SLOT)[0] - this.at(n * SLOT)[0]);
+      const level = Math.log2(minGap / gap);
+      if (level > 0) {
+        a *= clamp(1 - (level - trailingZeros(n)), 0, 1);
+        if (a < 0.02) continue;
+      }
       // 软软的一团雾，把山脊吞掉一截
       const rx = W * (0.12 + 0.12 * r()) * (0.6 + 0.4 * a), ry = rx * (0.28 + 0.1 * r());
       const cy = y + (r() - 0.6) * ry;
@@ -659,7 +668,8 @@ export class ClimbWorld implements World {
       if (artReady && r() < 0.7) {
         const s = r() < 0.5 ? this.art.band : this.art.clouds[Math.floor(r() * 2)];
         const w = rx * 2.6, hh = w / s.aspect;
-        s.draw(ctx, x - w / 2, cy - hh * 0.75, w, hh, look, 0.05, 0, { alpha: (0.5 + 0.5 * look.daylight) * a, flip: r() < 0.5 });
+        // 大小一直在变，用预缩好的几级小图画，不为每个尺寸重新着色
+        s.drawSmall(ctx, x, cy + hh * 0.25, hh, look, (0.5 + 0.5 * look.daylight) * a, r() < 0.5);
       }
     }
     // 右上角：所有更远的日子都挤在这里，整团压着云
@@ -967,6 +977,14 @@ function subLabel(ev: EventView): string {
 }
 
 const colorOf = (title: string) => PALETTE[hashStr(title) % PALETTE.length];
+
+/** n 能被 2 整除几次（0 算很多次） */
+function trailingZeros(n: number): number {
+  if (n === 0) return 32;
+  let k = 0;
+  for (let m = Math.abs(n); m % 2 === 0; m /= 2) k++;
+  return k;
+}
 
 /** 一维平滑噪声，0–1 */
 function noise(u: number, seed: number): number {

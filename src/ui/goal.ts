@@ -43,7 +43,9 @@ export class GoalForm {
     this.title.value = goal?.title ?? '';
     this.date.value = toDateInput(goal?.due ?? fallbackDue);
     const today = startOfDay(Date.now());
-    this.date.min = toDateInput(today);
+    // 今天傍晚 6 点已经过了，最早只能选明天
+    const pastDue = new Date().getHours() >= DUE_HOUR;
+    this.date.min = toDateInput(pastDue ? addDays(today, 1) : today);
     // 按日历往后数，跨过夏令时切换也是整 60 天
     this.date.max = toDateInput(addDays(today, MAX_DAYS));
     this.clearBtn.hidden = !goal;
@@ -60,13 +62,15 @@ export class GoalForm {
     else if (day === null) problem = '选一个截止日。';
     else if (day < today) problem = '截止日不能早于今天。';
     else if (day > addDays(today, MAX_DAYS)) problem = `截止日最远设到 ${MAX_DAYS} 天以后。`;
+    const due = new Date(day ?? 0);
+    due.setHours(DUE_HOUR, 0, 0, 0);
+    // 截止在那天傍晚 6 点；今天已经过了 6 点，就不能再选今天
+    if (!problem && due.getTime() <= Date.now()) problem = `今天 ${DUE_HOUR} 点已经过了，截止日选明天或以后。`;
     if (problem) {
       this.error.textContent = problem;
       (title ? this.date : this.title).focus();
       return;
     }
-    const due = new Date(day!);
-    due.setHours(DUE_HOUR, 0, 0, 0);
     // 改目标时保留出发的时刻，回望才接得上；第一次设就从现在出发
     const goal: Goal = { title, due: due.getTime(), start: this.current?.start ?? Date.now() };
     await this.deps.store.setGoal(goal);
