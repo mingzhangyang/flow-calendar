@@ -1,0 +1,42 @@
+:root {
+  --sans: "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  box-sizing: border-box;
+}
+/* 界面明暗跟着真实钟点：白天浅色，夜里深色。由 main.ts 设置 data-theme。
+   以后的详情面板、表单、列表都用这些变量。 */
+:root, :root[data-theme="dark"] {
+  --bg: #070C10;
+  --ink: #EEF2F0;
+  --ink-soft: rgba(238, 242, 240, .66);
+  --panel: rgba(14, 22, 30, .92);
+  --line: rgba(238, 242, 240, .14);
+  --accent: #F6DFA8;
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --bg: #D9E6EC;
+  --ink: #16262F;
+  --ink-soft: rgba(22, 38, 47, .66);
+  --panel: rgba(250, 252, 252, .94);
+  --line: rgba(22, 38, 47, .12);
+  --accent: #8A5212;
+  color-scheme: light;
+}
+*, *::before, *::after { box-sizing: inherit; }
+html, body { height: 100%; margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); }
+body { overflow: hidden; -webkit-font-smoothing: antialiased; overscroll-behavior: none; }
+
+/* 河流世界铺满整屏，画到系统栏下面；文字内容由世界自己避开安全区 */
+.stage { position: fixed; inset: 0; overflow: hidden; }
+#world {
+  position: absolute; inset: 0; width: 100%; height: 100%; display: block;
+  touch-action: none;
+  opacity: 0; transition: opacity .8s ease;
+}
+#world.ready { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { #world { transition: none; } }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
