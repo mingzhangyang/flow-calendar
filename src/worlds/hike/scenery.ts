@@ -52,7 +52,7 @@ export class Scenery {
   private sheepArt: Sprite;
   /** 三层远山的轮廓高度（像素），每 3 像素一个采样，从远到近 */
   private ridges: Float32Array[] = [];
-  /** 河流尽头的雪山：轮廓高度和峰高 */
+  /** 路尽头的雪山：轮廓高度和峰高 */
   private peak: Float32Array = new Float32Array(0);
   private peakH = 0;
   private clouds: { u: number; v: number; w: number; speed: number; puffs: [number, number, number][]; art: number; flip: boolean }[] = [];
@@ -105,7 +105,7 @@ export class Scenery {
     }
     RANGES.forEach((r, i) => {
       const s = this.ranges[i];
-      // 至少铺满屏幕宽度；窄屏上按高度来，只露出中间河流远去的山口和两边的山
+      // 至少铺满屏幕宽度；窄屏上按高度来，只露出中间路远去的山口和两边的山
       const h = Math.max((H * r.peak) / s.info.peak, W / s.aspect);
       const w = h * s.aspect;
       s.draw(ctx, W / 2 - w / 2, foot - h, w, h, look, r.mist, 0.75);
@@ -280,7 +280,7 @@ export class Scenery {
 
   /* ---------- 岸上：树、草、小溪、牛羊 ---------- */
 
-  drawBanks(ctx: CanvasRenderingContext2D, project: Project, bend: (h: number) => number, T: number, tau: number, look: Look) {
+  drawBanks(ctx: CanvasRenderingContext2D, project: Project, edgeX: (h: number, side: -1 | 1) => number, T: number, tau: number, look: Look) {
     const ink = inkOf(look);
     const grass = pigment(mixc(MALACHITE, INK, 0.35), look);
     const wash = pigment(mixc(MALACHITE, AZURITE, 0.3), look);
@@ -298,12 +298,12 @@ export class Scenery {
         const h0 = k * SLOT + r() * SLOT;
         const fade = (z: number) => smooth(FAR_Z, FAR_Z * 0.45, z);
         /** 路边一点：离路边 d（世界单位）、时刻 h */
-        const at = (d: number, h: number) => project(bend(h) + side * (0.88 + d), h);
+        const at = (d: number, h: number) => project(edgeX(h, side) + side * (0.03 + d), h);
 
         // 小溪：从远处的田野蜿蜒流到路边
         if (r() < 0.05) {
           const len = 1.5 + r() * 2.5, reach = 1.2 + r() * 1.3, wig = r() * 6, amp = 0.12 + r() * 0.15;
-          // 河道中线（离河边距离 d，时刻 h），再往两边各让出半个溪宽，投影成一条带子
+          // 溪的中线（离路边距离 d，时刻 h），再往两边各让出半个溪宽，投影成一条带子
           const mid: [number, number, number][] = [];
           for (let i = 0; i <= 32; i++) {
             const u = i / 32;
@@ -334,6 +334,21 @@ export class Scenery {
             ellipsePath(ctx, x, y, 0.22 * s, 0.03 * s);
             ctx.fill();
           }]);
+        }
+
+        // 路边的草：一两丛压在路边上，让路边不那么齐整（用自己的随机数，不影响别的景物）
+        {
+          const re = rng(k * 2 + (side > 0 ? 1 : 0) + 9_000_000);
+          const n = Math.floor(re() * 3), eseed = Math.floor(re() * 1e9);
+          for (let i = 0; i < n; i++) {
+            const [x, y, z] = at(-0.09 + re() * 0.1, k * SLOT + re() * SLOT);
+            const s = this.scale(z);
+            if (s && z < FAR_Z * 0.5 && s * 0.04 > 1.5) {
+              items.push([z, art
+                ? () => this.grassSprite(ctx, x, y, s, look, fade(z), rng(eseed + i))
+                : () => tuft(ctx, x, y, s, grass, fade(z), rng(eseed + i))]);
+            }
+          }
         }
 
         const kind = r();
@@ -461,7 +476,7 @@ function makeRidge(W: number, H: number, layer: number): Float32Array {
   const r = rng(101 + layer * 17);
   const n = Math.ceil(W / 3) + 1;
   const out = new Float32Array(n);
-  // 远的层更高更淡，近的层更矮；中间留出河流远去的山口
+  // 远的层更高更淡，近的层更矮；中间留出路远去的山口
   const maxH = H * [0.12, 0.085, 0.05][layer];
   const peaks: [number, number, number][] = [];
   for (let x = -H * 0.2; x < W + H * 0.2; x += H * (0.07 + r() * 0.1)) {

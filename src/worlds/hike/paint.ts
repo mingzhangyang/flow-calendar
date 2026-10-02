@@ -1,4 +1,4 @@
-/** 河流世界用到的绘图小工具 */
+/** 远足世界用到的绘图小工具 */
 export type RGB = [number, number, number];
 
 export const clamp = (x: number, a: number, b: number) => Math.max(a, Math.min(b, x));

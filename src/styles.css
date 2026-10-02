@@ -26,7 +26,7 @@
 html, body { height: 100%; margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); }
 body { overflow: hidden; -webkit-font-smoothing: antialiased; overscroll-behavior: none; }
 
-/* 河流世界铺满整屏，画到系统栏下面；文字内容由世界自己避开安全区 */
+/* 远足世界铺满整屏，画到系统栏下面；文字内容由世界自己避开安全区 */
 .stage { position: fixed; inset: 0; overflow: hidden; }
 #world {
   position: absolute; inset: 0; width: 100%; height: 100%; display: block;

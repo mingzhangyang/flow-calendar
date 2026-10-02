@@ -1,17 +1,17 @@
 /**
- * 把 assets/art/ 里的原图处理成河流世界用的 WebP：
+ * 把 assets/art/ 里的原图处理成远足世界用的 WebP：
  *   1. 抠掉绢底：从图片四边泛洪，只抠和外边相连的底色（主体里的白雪不动），
  *      按与底色的色差给透明度，边缘柔和过渡，并去掉边缘残留的底色。
  *   2. 山脚的白雾改成按高度的透明渐变，让山脚融进画面里的地平线雾。
  *   3. 裁掉上下空白，按屏幕实际用到的最大像素缩小，转 WebP。
- * 输出到 src/worlds/river/art/，并生成 index.ts（图片地址和几何信息）。
+ * 输出到 src/worlds/hike/art/，并生成 index.ts（图片地址和几何信息）。
  * 原图不动。用法：npm run art
  */
 import sharp from 'sharp';
 import { mkdir, writeFile } from 'node:fs/promises';
 
 const SRC = 'assets/art';
-const OUT = 'src/worlds/river/art';
+const OUT = 'src/worlds/hike/art';
 
 /**
  * fade: 从 fade[0] 到 fade[1]（占原图高度的比例）逐渐变透明，

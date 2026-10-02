@@ -12,7 +12,7 @@ import { Scenery } from './scenery';
 import { silkPattern } from './silk';
 
 /**
- * 河流世界
+ * 远足世界：沿着一条土路往远处走
  *
  * 透视：离“现在”越远，东西越小、越靠近地平线。
  *   深度 z = 1 + (h - T) / TAU     h 是某个时刻（本地小时），T 是视角所在时刻
@@ -22,12 +22,34 @@ import { silkPattern } from './silk';
 const TAU = 3.5;
 /** 路的轻微弯曲 */
 const bend = (h: number) => 0.22 * Math.sin(h * 0.13);
+/** 路的半宽（世界单位） */
+const ROAD = 0.5;
+
+/** 一维的平滑噪声：每 1 个单位一个随机值，中间平滑过渡 */
+function noise(u: number, seed: number): number {
+  const i = Math.floor(u), f = u - i;
+  const v = (k: number) => {
+    let t = Math.imul((k + seed * 7919) ^ 0x9e3779b9, 0x85ebca6b);
+    t ^= t >>> 13; t = Math.imul(t, 0xc2b2ae35); t ^= t >>> 16;
+    return (t >>> 0) / 4294967296;
+  };
+  return v(i) + (v(i + 1) - v(i)) * f * f * (3 - 2 * f);
+}
+
+/**
+ * 路边：时刻 h 处、side 那一边的路边离路中心多远。
+ * 几层快慢不同的起伏叠在一起，左右两边各不相同；钉在时间轴上，同一时刻永远一样。
+ */
+const edgeOf = (h: number, side: -1 | 1) =>
+  ROAD + 0.12 * (noise(h * 0.8, side + 3) - 0.5) + 0.06 * (noise(h * 2.6, side + 7) - 0.5) + 0.025 * (noise(h * 7, side + 11) - 0.5);
+/** 路边那一点的横向位置 */
+const edgeX = (h: number, side: -1 | 1) => bend(h) + side * edgeOf(h, side);
 
 interface Hit { id: string; x: number; y: number; r: number }
 
-export class RiverWorld implements World {
-  readonly id = 'river';
-  readonly name = '河流';
+export class HikeWorld implements World {
+  readonly id = 'hike';
+  readonly name = '远足';
 
   private W = 0; private H = 0;
   private HZ = 0;   // 地平线
@@ -56,7 +78,7 @@ export class RiverWorld implements World {
 
   private z(h: number) { return 1 + (h - this.T) / TAU; }
 
-  /** 路面上一点 → 屏幕坐标。X 是横向位置（路中心为 0，两边约 ±0.85） */
+  /** 路面上一点 → 屏幕坐标。X 是横向位置（路中心为 0，两边约 ±ROAD） */
   private project(X: number, h: number): [number, number, number] {
     const z = this.z(h);
     return [this.W / 2 + (X * this.S) / z, this.HZ + this.D / z, z];
@@ -78,7 +100,7 @@ export class RiverWorld implements World {
     this.drawHourLines(ctx, look);
     this.drawBank(ctx, -1, sky, look);
     this.drawBank(ctx, 1, sky, look);
-    this.scenery.drawBanks(ctx, (X, h) => this.project(X, h), bend, this.T, TAU, look);
+    this.scenery.drawBanks(ctx, (X, h) => this.project(X, h), edgeX, this.T, TAU, look);
     this.drawHaze(ctx, sky);
     this.drawRoadTexture(ctx, look);
     this.drawHorizonMarks(ctx, f.now, look);
@@ -128,8 +150,9 @@ export class RiverWorld implements World {
 
   private polyAcross(ctx: CanvasRenderingContext2D, h: number, c: RGB, a: number) {
     ctx.beginPath();
+    const x0 = edgeX(h, -1), x1 = edgeX(h, 1);
     for (let i = 0; i <= 14; i++) {
-      const X = bend(h) - 0.85 + (1.7 * i) / 14;
+      const X = x0 + ((x1 - x0) * i) / 14;
       const [x, y] = this.project(X, h);
       if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
     }
@@ -158,10 +181,13 @@ export class RiverWorld implements World {
   private drawBank(ctx: CanvasRenderingContext2D, side: -1 | 1, sky: Sky, look: Look) {
     const { W, H, HZ, T } = this;
     const pts: [number, number][] = [];
-    for (let z = 0.3; z < 300; z *= 1.1) {
+    // 采样要密一些，路边的小起伏才画得出来
+    const hs: number[] = [];
+    for (let z = 0.3; z < 300; z *= 1.03) {
       const h = T + (z - 1) * TAU;
-      const [x, y] = this.project(bend(h) + side * 0.85, h);
+      const [x, y] = this.project(edgeX(h, side), h);
       pts.push([x, y]);
+      hs.push(h);
     }
     const edge = side < 0 ? -10 : W + 10;
     ctx.beginPath();
@@ -177,15 +203,26 @@ export class RiverWorld implements World {
     ctx.fillStyle = g;
     ctx.fill();
 
-    // 岸边一道赭石的沙岸，再用墨勾一笔
-    ctx.beginPath();
-    pts.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])));
-    ctx.strokeStyle = rgba(pigment(OCHRE, look), 0.4);
-    ctx.lineWidth = 5;
-    ctx.stroke();
-    ctx.strokeStyle = rgba(pigment(INK, look), 0.35);
-    ctx.lineWidth = 1;
-    ctx.stroke();
+    // 路边一道赭石的土边，宽窄不一；再用墨断断续续勾几笔，不描成一条整齐的线
+    const ochre = pigment(OCHRE, look), ink = pigment(INK, look);
+    ctx.save();
+    ctx.lineCap = 'round';
+    for (let i = 1; i < pts.length; i++) {
+      const [x0, y0] = pts[i - 1], [x1, y1] = pts[i];
+      if (Math.abs(y1 - y0) < 0.05 && Math.abs(x1 - x0) < 0.05) continue;
+      const h = hs[i], z = 1 + (h - T) / TAU;
+      const k = Math.min(1, 1.6 / Math.sqrt(z)); // 远处的笔画细一些
+      ctx.strokeStyle = rgba(ochre, 0.32);
+      ctx.lineWidth = (2 + 6 * noise(h * 3, side + 21)) * k;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+      const ia = 0.45 * smooth(0.35, 0.75, noise(h * 4, side + 31));
+      if (ia > 0.02) {
+        ctx.strokeStyle = rgba(ink, ia);
+        ctx.lineWidth = 0.9;
+        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+      }
+    }
+    ctx.restore();
   }
 
   private drawHaze(ctx: CanvasRenderingContext2D, sky: Sky) {
@@ -203,13 +240,13 @@ export class RiverWorld implements World {
    */
   private drawRuts(ctx: CanvasRenderingContext2D, look: Look) {
     const { T } = this;
-    for (const off of [-0.24, 0.24]) {
+    for (const off of [-0.16, 0.16]) {
       // 一小段一小段地画，近处（“现在”线以下）和远处都淡掉，免得近处变成两条粗带子
       let prev: [number, number, number, number] | null = null;
       for (let z = 0.45; z < 80; z *= 1.06) {
         const h = T + (z - 1) * TAU;
         const c = bend(h) + off + 0.025 * Math.sin(h * 0.7 + off * 9);
-        const w = 0.032 * (1 + 0.25 * Math.sin(h * 1.3 + off * 5));
+        const w = 0.028 * (1 + 0.25 * Math.sin(h * 1.3 + off * 5));
         const [lx, ly] = this.project(c - w, h), [rx, ry] = this.project(c + w, h);
         if (prev) {
           const a = look.rutAlpha * 0.4 * smooth(0.45, 1.05, z) * smooth(80, 25, z);
@@ -246,10 +283,10 @@ export class RiverWorld implements World {
       const b = bend(h);
       const r = rng(k * 31 + 7);
       ctx.beginPath();
-      const n = 2 + Math.floor(r() * 3);
+      const n = 1 + Math.floor(r() * 3);
       for (let i = 0; i < n; i++) {
         // 每一笔长短、位置、起伏都不同，像手画的
-        const X = -0.78 + r() * 1.56, len = 0.04 + r() * 0.08;
+        const X = -(ROAD - 0.06) + r() * (ROAD - 0.06) * 2 - 0.05, len = 0.03 + r() * 0.06;
         const p0 = this.project(b + X, h), p1 = this.project(b + X + len, h);
         const c = this.project(b + X + len / 2, h - step * (r() - 0.5) * 0.6);
         ctx.moveTo(p0[0], p0[1]);
@@ -258,7 +295,7 @@ export class RiverWorld implements World {
       ctx.strokeStyle = rgba(look.rut, a);
       ctx.stroke();
       if (r() < 0.1) {
-        const [x, y] = this.project(b - 0.75 + r() * 1.5, h);
+        const [x, y] = this.project(b + (r() - 0.5) * (ROAD - 0.08) * 2, h);
         pebbles.push([x, y, ((0.006 * this.S) / z) * (a / look.rutAlpha)]);
       }
     }
@@ -309,7 +346,7 @@ export class RiverWorld implements World {
     for (const [ms, text] of marks) {
       if (ms === tomorrow && monday === tomorrow && text === '下周一') continue;
       const h = localHours(ms);
-      const [x, y, z] = this.project(bend(h) - 0.92, h);
+      const [x, y, z] = this.project(edgeX(h, -1) - 0.07, h);
       if (z < 1.25 || z > 280) continue;
       if (Math.abs(y - lastY) < 13) continue; // 挤在一起就只留前一个
       lastY = y;
@@ -392,5 +429,5 @@ export class RiverWorld implements World {
 }
 
 /* 每个日程在路面上的横向位置和颜色，由 id、标题决定，保持稳定 */
-const laneOf = (id: string) => ((hashStr(id) % 1000) / 1000 - 0.5) * 0.76;
+const laneOf = (id: string) => ((hashStr(id) % 1000) / 1000 - 0.5) * 0.5;
 const colorOf = (title: string) => PALETTE[hashStr(title) % PALETTE.length];

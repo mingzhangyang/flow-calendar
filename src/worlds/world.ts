@@ -1,7 +1,7 @@
 import type { Frame } from '../model/types';
 
 /**
- * 世界接口。河流、登山、农场、深海各实现一份。
+ * 世界接口。远足、登山、农场、深海各实现一份。
  * 世界只负责“画”和“点中了谁”，不保存日程，也不决定时间怎么走。
  */
 export interface World {

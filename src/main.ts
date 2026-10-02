@@ -6,7 +6,7 @@ import { fmtDay, fmtTime, startOfDay, HOUR, MINUTE } from './model/time';
 import { demoEvents } from './model/demo';
 import { type Theme, themeAt } from './model/daylight';
 import type { World } from './worlds/world';
-import { RiverWorld } from './worlds/river';
+import { HikeWorld } from './worlds/hike';
 
 const canvas = document.getElementById('world') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
@@ -15,7 +15,7 @@ const viewport = new Viewport();
 const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
 viewport.reducedMotion = motionQuery.matches;
 motionQuery.addEventListener('change', () => { viewport.reducedMotion = motionQuery.matches; });
-const world: World = new RiverWorld(() => requestRender());
+const world: World = new HikeWorld(() => requestRender());
 
 // 第 3 步换成本地数据库
 let events: CalEvent[] = demoEvents(Date.now());
@@ -46,7 +46,7 @@ function resize() {
 /* ---------- 按需重绘 ----------
  * 只有三种情况会画：
  *   1. 视角在动、或世界有过渡动画 → 逐帧画
- *   2. 时间往前走了一点 → 按世界给的间隔画一次（河流约每 20 秒）
+ *   2. 时间往前走了一点 → 按世界给的间隔画一次（远足约每 20 秒）
  *   3. 尺寸变化、页面重新可见、某个日程改变状态、素材加载好 → 立刻画一次
  * 页面在后台时完全不画。
  */
@@ -183,7 +183,7 @@ function showViewing(f: Frame) {
 }
 
 /* ---------- 界面明暗 ----------
- * 跟着真实的现在，而不是视角：拖去看今晚时，河会变暗，
+ * 跟着真实的现在，而不是视角：拖去看今晚时，画面会变暗，
  * 但面板和按钮仍然是此刻该有的样子。
  */
 let currentTheme: Theme | null = null;
@@ -201,7 +201,7 @@ let lastDescription = '';
 function describe(f: Frame) {
   const live = f.events.filter(e => e.state === 'live');
   const next = f.events.find(e => e.state === 'soon' || e.state === 'future');
-  let text = `河流视图。现在是${fmtDay(f.now)} ${fmtTime(f.now)}。`;
+  let text = `远足视图。现在是${fmtDay(f.now)} ${fmtTime(f.now)}。`;
   if (Math.abs(f.view - f.now) > HOUR / 4) text += `正在看${fmtDay(f.view)} ${fmtTime(f.view)}。`;
   if (live.length) text += `正在进行：${live.map(e => e.title).join('、')}。`;
   if (next) text += `下一个日程：${next.title}，${fmtDay(next.start)} ${fmtTime(next.start)} 开始。`;
