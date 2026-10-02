@@ -20,7 +20,7 @@ import { silkPattern } from './silk';
  * TAU 越大，近处的几个小时铺得越开。
  */
 const TAU = 3.5;
-/** 河道的轻微弯曲 */
+/** 路的轻微弯曲 */
 const bend = (h: number) => 0.22 * Math.sin(h * 0.13);
 
 interface Hit { id: string; x: number; y: number; r: number }
@@ -50,13 +50,13 @@ export class RiverWorld implements World {
     this.HZ = h * 0.3;
     this.NOWY = h * 0.7;
     this.D = this.NOWY - this.HZ;
-    this.S = Math.min(w * 0.55, h * 0.6); // 宽屏上不让河面和光球过大
+    this.S = Math.min(w * 0.55, h * 0.6); // 宽屏上不让路面和光球过大
     this.scenery.resize(w, h, this.HZ);
   }
 
   private z(h: number) { return 1 + (h - this.T) / TAU; }
 
-  /** 河面上一点 → 屏幕坐标。X 是横向位置（河中心为 0，两岸约 ±0.85） */
+  /** 路面上一点 → 屏幕坐标。X 是横向位置（路中心为 0，两边约 ±0.85） */
   private project(X: number, h: number): [number, number, number] {
     const z = this.z(h);
     return [this.W / 2 + (X * this.S) / z, this.HZ + this.D / z, z];
@@ -73,13 +73,14 @@ export class RiverWorld implements World {
 
     drawSky(ctx, W, HZ, sky, night, body);
     this.scenery.drawFar(ctx, sky, look, this.T);
-    this.drawWater(ctx, look, body);
-    this.drawWaterLines(ctx, look);
+    this.drawRoad(ctx, look);
+    this.drawRuts(ctx, look);
+    this.drawHourLines(ctx, look);
     this.drawBank(ctx, -1, sky, look);
     this.drawBank(ctx, 1, sky, look);
     this.scenery.drawBanks(ctx, (X, h) => this.project(X, h), bend, this.T, TAU, look);
     this.drawHaze(ctx, sky);
-    this.drawRipples(ctx, look);
+    this.drawRoadTexture(ctx, look);
     this.drawHorizonMarks(ctx, f.now, look);
     this.drawSilk(ctx, look);
     this.drawEvents(ctx, f.events, night, look);
@@ -111,29 +112,18 @@ export class RiverWorld implements World {
     return clamp((0.5 / pxPerMinute) * 60_000, 5_000, 60_000);
   }
 
-  /* ---------- 水与岸 ---------- */
+  /* ---------- 路与路边 ---------- */
 
-  private drawWater(ctx: CanvasRenderingContext2D, look: Look, body: ReturnType<typeof celestial>) {
-    const { W, H, HZ, NOWY } = this;
-    const top = look.waterTop, bot = look.waterBot;
+  /** 路面：整片铺满，两边再由岸上的田野盖住 */
+  private drawRoad(ctx: CanvasRenderingContext2D, look: Look) {
+    const { W, H, HZ } = this;
+    const far = look.roadFar, near = look.roadNear;
     const g = ctx.createLinearGradient(0, HZ, 0, H);
-    g.addColorStop(0, rgba(top, 1));
-    g.addColorStop(0.45, rgba(mixc(top, bot, 0.7), 1));
-    g.addColorStop(1, rgba(bot, 1));
+    g.addColorStop(0, rgba(far, 1));
+    g.addColorStop(0.45, rgba(mixc(far, near, 0.7), 1));
+    g.addColorStop(1, rgba(near, 1));
     ctx.fillStyle = g;
     ctx.fillRect(0, HZ, W, H - HZ);
-
-    // 太阳或月亮在水里的倒影（固定的碎光，不晃动）
-    if (body && body.y < HZ + 4) {
-      for (let k = 0; k < 16; k++) {
-        const yy = HZ + 5 + k * k * 1.5;
-        if (yy > NOWY) break;
-        const ww = (34 - k * 1.8) * (1 + 0.35 * Math.sin(k * 1.3));
-        if (ww <= 0) break;
-        ctx.fillStyle = rgba(body.c, 0.32 * (1 - k / 16) * body.a);
-        ctx.fillRect(body.x - ww / 2 + Math.sin(k) * 3, yy, ww, 1.6);
-      }
-    }
   }
 
   private polyAcross(ctx: CanvasRenderingContext2D, h: number, c: RGB, a: number) {
@@ -147,15 +137,15 @@ export class RiverWorld implements World {
     ctx.stroke();
   }
 
-  /** 水面上的横线：近处每小时一条，远处只留每天一条 */
-  private drawWaterLines(ctx: CanvasRenderingContext2D, look: Look) {
+  /** 路面上的横线：近处每小时一条，远处只留每天一条 */
+  private drawHourLines(ctx: CanvasRenderingContext2D, look: Look) {
     const { T, D } = this;
     const c = look.line, gain = look.lineGain;
     ctx.lineWidth = 1;
     for (let h = Math.ceil(T - TAU * 0.68); h < T + TAU * 13; h++) {
       const z = this.z(h), gap = D / z - D / (z + 1 / TAU);
       const isMidnight = mod(h, 24) === 0;
-      const a = gain * smooth(2.5, 9, gap) * (isMidnight ? 0.5 : 0.2) * smooth(0.32, 0.6, z);
+      const a = gain * smooth(2.5, 9, gap) * (isMidnight ? 0.4 : 0.1) * smooth(0.32, 0.6, z);
       if (a > 0.005) this.polyAcross(ctx, h, c, a);
     }
     for (let d = Math.ceil((T + TAU * 13) / 24); d * 24 < T + TAU * 260; d++) {
@@ -209,36 +199,75 @@ export class RiverWorld implements World {
   }
 
   /**
-   * 水纹：青绿山水里的网巾纹，一排排相互错开的小弧线。
-   * 钉在时间轴上，随时间一起往下漂；远处排得太密时淡掉，水面留白成雾。
+   * 车辙：路中间两道略深的带子，顺着路弯，钉在时间轴上（微微的起伏跟着时刻走）。
    */
-  private drawRipples(ctx: CanvasRenderingContext2D, look: Look) {
+  private drawRuts(ctx: CanvasRenderingContext2D, look: Look) {
+    const { T } = this;
+    for (const off of [-0.24, 0.24]) {
+      // 一小段一小段地画，近处（“现在”线以下）和远处都淡掉，免得近处变成两条粗带子
+      let prev: [number, number, number, number] | null = null;
+      for (let z = 0.45; z < 80; z *= 1.06) {
+        const h = T + (z - 1) * TAU;
+        const c = bend(h) + off + 0.025 * Math.sin(h * 0.7 + off * 9);
+        const w = 0.032 * (1 + 0.25 * Math.sin(h * 1.3 + off * 5));
+        const [lx, ly] = this.project(c - w, h), [rx, ry] = this.project(c + w, h);
+        if (prev) {
+          const a = look.rutAlpha * 0.4 * smooth(0.45, 1.05, z) * smooth(80, 25, z);
+          ctx.fillStyle = rgba(look.rut, a);
+          ctx.beginPath();
+          ctx.moveTo(prev[0], prev[1]); ctx.lineTo(prev[2], prev[3]);
+          ctx.lineTo(rx, ry); ctx.lineTo(lx, ly);
+          ctx.closePath();
+          ctx.fill();
+        }
+        prev = [lx, ly, rx, ry];
+      }
+    }
+  }
+
+  /**
+   * 路面的干笔：一排排短促的横笔，偶尔一颗石子，像土路上的皴擦。
+   * 钉在时间轴上，随时间一起往下走；远处排得太密时淡掉，路面留白成雾。
+   */
+  private drawRoadTexture(ctx: CanvasRenderingContext2D, look: Look) {
     const { T, D } = this;
-    const step = 0.13, aw = 0.075;
+    const step = 0.13;
     ctx.save();
-    ctx.lineWidth = 0.8;
+    ctx.lineWidth = 0.9;
+    ctx.lineCap = 'round';
+    const pebbles: [number, number, number][] = [];
     for (let k = Math.ceil((T - TAU * 0.65) / step); ; k++) {
       const h = k * step, z = this.z(h);
       const gap = D / z - D / (z + step / TAU);
       if (gap < 2.5) break;
       if (z < 0.35) continue;
-      // “现在”线以下离得太近，纹样会变大变呆板，淡掉
-      const a = look.rippleAlpha * smooth(2.5, 6, gap) * (0.35 + 0.65 * smooth(0.75, 1.05, z));
-      const shift = mod(k, 2) ? aw / 2 : 0;
+      // “现在”线以下离得太近，笔触会变大变呆板，淡掉
+      const a = look.rutAlpha * smooth(2.5, 6, gap) * (0.35 + 0.65 * smooth(0.75, 1.05, z));
       const b = bend(h);
       const r = rng(k * 31 + 7);
       ctx.beginPath();
-      for (let X = -0.85 + shift; X + aw <= 0.85; X += aw) {
-        // 每一笔长短、起伏略有不同，像手画的
-        if (r() < 0.12) continue;
-        const x0 = X + r() * aw * 0.15, x1 = X + aw * (0.9 + r() * 0.15);
-        const p0 = this.project(b + x0, h), p1 = this.project(b + x1, h);
-        const c = this.project(b + (x0 + x1) / 2, h - step * (0.6 + r() * 0.5));
+      const n = 2 + Math.floor(r() * 3);
+      for (let i = 0; i < n; i++) {
+        // 每一笔长短、位置、起伏都不同，像手画的
+        const X = -0.78 + r() * 1.56, len = 0.04 + r() * 0.08;
+        const p0 = this.project(b + X, h), p1 = this.project(b + X + len, h);
+        const c = this.project(b + X + len / 2, h - step * (r() - 0.5) * 0.6);
         ctx.moveTo(p0[0], p0[1]);
         ctx.quadraticCurveTo(c[0], c[1], p1[0], p1[1]);
       }
-      ctx.strokeStyle = rgba(look.ripple, a);
+      ctx.strokeStyle = rgba(look.rut, a);
       ctx.stroke();
+      if (r() < 0.1) {
+        const [x, y] = this.project(b - 0.75 + r() * 1.5, h);
+        pebbles.push([x, y, ((0.006 * this.S) / z) * (a / look.rutAlpha)]);
+      }
+    }
+    // 石子：一点淡墨，下沿一笔深一点
+    ctx.fillStyle = rgba(look.rut, look.rutAlpha * 0.9);
+    for (const [x, y, rr] of pebbles) {
+      if (rr < 0.4) continue;
+      ellipsePath(ctx, x, y, rr * 1.3, rr * 0.7);
+      ctx.fill();
     }
     ctx.restore();
   }
@@ -362,6 +391,6 @@ export class RiverWorld implements World {
   }
 }
 
-/* 每个日程在河面上的横向位置和颜色，由 id、标题决定，保持稳定 */
+/* 每个日程在路面上的横向位置和颜色，由 id、标题决定，保持稳定 */
 const laneOf = (id: string) => ((hashStr(id) % 1000) / 1000 - 0.5) * 0.76;
 const colorOf = (title: string) => PALETTE[hashStr(title) % PALETTE.length];

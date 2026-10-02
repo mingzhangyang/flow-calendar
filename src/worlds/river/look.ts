@@ -26,10 +26,13 @@ export interface Look {
   light: boolean;
   /** 天色（绢在此刻光线下的颜色），用来给颜料染一点环境光 */
   tint: RGB;
-  waterTop: RGB; waterBot: RGB;
+  roadFar: RGB; roadNear: RGB;
+  /** 小溪的水色 */
+  water: RGB;
   land: RGB; landShade: number;
   line: RGB; lineGain: number;
-  ripple: RGB; rippleAlpha: number;
+  /** 车辙和路面干笔的颜色、浓淡 */
+  rut: RGB; rutAlpha: number;
   ink: RGB; inkSoft: number; halo: string;
   now: RGB; nowGlow: RGB;
   mark: RGB;
@@ -54,15 +57,16 @@ export function lookAt(sky: Sky, daylight: number): Look {
 
   return {
     ...base,
-    // 水：远处淡进绢色的雾里，近处是淡淡的青绿
-    waterTop: pigment(mixc(SILK, [196, 214, 196], 0.5), base, 0.35),
-    waterBot: pigment(mixc([150, 186, 176], AZURITE, 0.22), base),
+    // 路：浅赭色的土路，远处淡进绢色的雾里，近处略深
+    roadFar: pigment(mixc(SILK, OCHRE, 0.18), base, 0.35),
+    roadNear: pigment(mixc(SILK, OCHRE, 0.42), base),
+    water: pigment(mixc(mixc(SILK, [196, 214, 196], 0.5), [150, 186, 176], 0.4), base, 0.15),
     land: pigment(mixc(MALACHITE, OCHRE, 0.32), base),
     landShade: 0.22 - 0.1 * d,
-    line: pigment(mixc(INK, AZURITE, 0.4), base),
+    line: pigment(mixc(INK, OCHRE, 0.45), base),
     lineGain: 0.55 + 0.25 * d,
-    ripple: light ? mixc(AZURITE, INK, 0.35) : mixc(sky.bot, [210, 220, 214], 0.5),
-    rippleAlpha: light ? 0.32 : 0.22,
+    rut: pigment(mixc(OCHRE, INK, 0.35), base),
+    rutAlpha: light ? 0.3 : 0.4,
     ink: light ? INK : [246, 238, 222],
     inkSoft: light ? 0.72 : 0.72,
     halo: light ? 'rgba(244,236,214,.92)' : 'rgba(20,18,22,.6)',

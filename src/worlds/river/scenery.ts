@@ -5,10 +5,10 @@ import { Sprite } from './sprites';
 import { ART } from './art';
 
 /**
- * 河两岸的水墨景物：远山、白云、树、草、小溪、牛羊。
+ * 路两边的景物：远山、白云、树、草、小溪、牛羊。
  *
  * 远山在无穷远处，钉在屏幕上不动；白云随时间缓缓往一边飘。
- * 岸上的东西钉在时间轴上，和日程一样顺水漂来，拖动时一起移动。
+ * 路边的东西钉在时间轴上，和日程一样沿路走来，拖动时一起移动。
  * 每样东西的位置和样子都由它所在的时间段决定，同一时刻永远长一个样。
  */
 
@@ -284,7 +284,7 @@ export class Scenery {
     const ink = inkOf(look);
     const grass = pigment(mixc(MALACHITE, INK, 0.35), look);
     const wash = pigment(mixc(MALACHITE, AZURITE, 0.3), look);
-    const water = mixc(look.waterTop, look.waterBot, 0.3);
+    const water = look.water;
     const wool = pigment(SHELL_WHITE, look, 0.1);
     const leaves: [RGB, RGB] = [pigment(MALACHITE, look), pigment(mixc(AZURITE, MALACHITE, 0.3), look)];
     const items: [number, () => void][] = [];
@@ -297,17 +297,17 @@ export class Scenery {
         const r = rng(k * 2 + (side > 0 ? 1 : 0) + 7_000_000);
         const h0 = k * SLOT + r() * SLOT;
         const fade = (z: number) => smooth(FAR_Z, FAR_Z * 0.45, z);
-        /** 岸上一点：离河边 d（世界单位）、时刻 h */
+        /** 路边一点：离路边 d（世界单位）、时刻 h */
         const at = (d: number, h: number) => project(bend(h) + side * (0.88 + d), h);
 
-        // 小溪：从远处的田野蜿蜒流进河里
+        // 小溪：从远处的田野蜿蜒流到路边
         if (r() < 0.05) {
           const len = 1.5 + r() * 2.5, reach = 1.2 + r() * 1.3, wig = r() * 6, amp = 0.12 + r() * 0.15;
           // 河道中线（离河边距离 d，时刻 h），再往两边各让出半个溪宽，投影成一条带子
           const mid: [number, number, number][] = [];
           for (let i = 0; i <= 32; i++) {
             const u = i / 32;
-            const d = -0.05 + u * reach + amp * Math.sin(u * 7 + wig) * u;
+            const d = 0.04 + u * reach + amp * Math.sin(u * 7 + wig) * u;
             const h = h0 + u * len + 0.3 * Math.sin(u * 4.3 + wig * 1.7) * u;
             mid.push([d, h, 0.028 * (1 - 0.65 * u)]); // 越往上游越窄
           }
@@ -402,7 +402,7 @@ export class Scenery {
    * 远处用 a 淡掉。样子由 r（这一处景物自己的随机数）决定，同一时刻永远一样。
    */
 
-  /** 树：离河近的多是柳，远些是阔叶树和松 */
+  /** 树：路边多是柳，远些是阔叶树和松 */
   private treeSprite(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, d: number, look: Look, a: number, r: () => number) {
     const u = r();
     const kind = d < 0.35 ? (u < 0.55 ? 2 : u < 0.8 ? 0 : 1) : (u < 0.5 ? 0 : u < 0.85 ? 1 : 2);
