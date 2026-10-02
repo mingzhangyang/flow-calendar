@@ -1,17 +1,15 @@
 /**
- * 把 assets/art/ 里的原图处理成远足世界用的 WebP：
+ * 把 assets/art/ 里的原图处理成各个世界用的 WebP：
  *   1. 抠掉绢底：从图片四边泛洪，只抠和外边相连的底色（主体里的白雪不动），
  *      按与底色的色差给透明度，边缘柔和过渡，并去掉边缘残留的底色。
  *   2. 山脚的白雾改成按高度的透明渐变，让山脚融进画面里的地平线雾。
  *   3. 裁掉上下空白，按屏幕实际用到的最大像素缩小，转 WebP。
- * 输出到 src/worlds/hike/art/，并生成 index.ts（图片地址和几何信息）。
- * 原图不动。用法：npm run art
+ * 远足的输出到 src/worlds/hike/art/，登山的输出到 src/worlds/climb/art/，
+ * 并各自生成 index.ts（图片地址和几何信息）。
+ * 原图不动。用法：npm run art（只处理某一组：npm run art -- climb）
  */
 import sharp from 'sharp';
 import { mkdir, writeFile } from 'node:fs/promises';
-
-const SRC = 'assets/art';
-const OUT = 'src/worlds/hike/art';
 
 /**
  * fade: 从 fade[0] 到 fade[1]（占原图高度的比例）逐渐变透明，
@@ -22,7 +20,7 @@ const OUT = 'src/worlds/hike/art';
  * ground: 岸上的精灵图（树、草、牛羊）。底边裁到落地处，并记下落地点的横向位置。
  * flood: false 时不从四边泛洪，全图按色差抠（树、草：枝叶间围住的底色也要去掉）。
  */
-const JOBS = [
+const HIKE = [
   { name: 'range-far', fade: [0.56, 0.7], width: 3072 },
   { name: 'range-mid', fade: [0.58, 0.72], width: 3072 },
   { name: 'range-near', fade: [0.6, 0.74], width: 3072 },
@@ -41,6 +39,23 @@ const JOBS = [
   { name: 'hut-1', width: 256, ground: true },
 ];
 
+/** 登山：人物、营地、石堆、山顶的旗、云带 */
+const CLIMB = [
+  { name: 'climber-walk-1', width: 160, ground: true, flood: false },
+  { name: 'climber-steep-1', width: 160, ground: true, flood: false },
+  { name: 'climber-rest-1', width: 192, ground: true, flood: false },
+  { name: 'companion-1', width: 128, ground: true, flood: false },
+  { name: 'camp-1', width: 320, ground: true, flood: false },
+  { name: 'cairn-1', width: 128, ground: true },
+  { name: 'summit-flag-1', width: 160, ground: true },
+  { name: 'cloud-band-1', width: 1536, lo: 3, hi: 30 },
+];
+
+const GROUPS = [
+  { id: 'hike', src: 'assets/art', out: 'src/worlds/hike/art', jobs: HIKE },
+  { id: 'climb', src: 'assets/art/mountain', out: 'src/worlds/climb/art', jobs: CLIMB },
+];
+
 /** 色差低于 LO 全透明，高于 HI 不透明；泛洪只穿过色差低于 HI 的像素 */
 const LO = 10, HI = 38;
 
@@ -49,7 +64,7 @@ const smooth = (a, b, x) => {
   return t * t * (3 - 2 * t);
 };
 
-async function prepare({ name, fade, width, ground = false, flood = true, lo = LO, hi = HI }) {
+async function prepare(SRC, OUT, { name, fade, width, ground = false, flood = true, lo = LO, hi = HI }) {
   const { data, info } = await sharp(`${SRC}/${name}.png`).removeAlpha().raw().toBuffer({ resolveWithObject: true });
   const W = info.width, H = info.height, N = W * H;
 
@@ -149,28 +164,34 @@ async function prepare({ name, fade, width, ground = false, flood = true, lo = L
   return { name, width, height, peak: fade ? (y1 - top) / (y1 - y0) : 0, ax, bg };
 }
 
-await mkdir(OUT, { recursive: true });
-const done = [];
-for (const job of JOBS) {
-  const r = await prepare(job);
-  console.log(r.name, `${r.width}×${r.height}`, 'bg', r.bg.join(','), 'peak', r.peak.toFixed(3), 'ax', r.ax.toFixed(3));
-  done.push(r);
+const only = process.argv[2];
+for (const { id: group, src, out, jobs } of GROUPS) {
+  if (only && only !== group) continue;
+  await mkdir(out, { recursive: true });
+  const done = [];
+  for (const job of jobs) {
+    const r = await prepare(src, out, job);
+    console.log(r.name, `${r.width}×${r.height}`, 'bg', r.bg.join(','), 'peak', r.peak.toFixed(3), 'ax', r.ax.toFixed(3));
+    done.push(r);
+  }
+  await writeFile(`${out}/index.ts`, indexOf(done));
 }
 
-const id = n => n.replace(/-(\w)/g, (_, c) => c.toUpperCase());
-const lines = [
-  '// 由 scripts/prepare-art.mjs 生成，不要手改',
-  ...done.map(r => `import ${id(r.name)} from './${r.name}.webp';`),
-  '',
-  '/**',
-  ' * w、h：图片像素；peak：最高处到山脚（图片底边）的距离，占图片高度的比例（云和精灵图为 0）；',
-  ' * ax：落地点（底边上树干、脚的位置）离左边多远，占图片宽度的比例',
-  ' */',
-  'export interface ArtInfo { url: string; w: number; h: number; peak: number; ax: number }',
-  '',
-  'export const ART = {',
-  ...done.map(r => `  ${id(r.name)}: { url: ${id(r.name)}, w: ${r.width}, h: ${r.height}, peak: ${r.peak.toFixed(3)}, ax: ${r.ax.toFixed(3)} },`),
-  '} satisfies Record<string, ArtInfo>;',
-  '',
-];
-await writeFile(`${OUT}/index.ts`, lines.join('\n'));
+function indexOf(done) {
+  const id = n => n.replace(/-(\w)/g, (_, c) => c.toUpperCase());
+  return [
+    '// 由 scripts/prepare-art.mjs 生成，不要手改',
+    ...done.map(r => `import ${id(r.name)} from './${r.name}.webp';`),
+    '',
+    '/**',
+    ' * w、h：图片像素；peak：最高处到山脚（图片底边）的距离，占图片高度的比例（云和精灵图为 0）；',
+    ' * ax：落地点（底边上树干、脚的位置）离左边多远，占图片宽度的比例',
+    ' */',
+    'export interface ArtInfo { url: string; w: number; h: number; peak: number; ax: number }',
+    '',
+    'export const ART = {',
+    ...done.map(r => `  ${id(r.name)}: { url: ${id(r.name)}, w: ${r.width}, h: ${r.height}, peak: ${r.peak.toFixed(3)}, ax: ${r.ax.toFixed(3)} },`),
+    '} satisfies Record<string, ArtInfo>;',
+    '',
+  ].join('\n');
+}

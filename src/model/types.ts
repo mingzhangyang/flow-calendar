@@ -23,6 +23,14 @@ export interface EventView extends CalEvent {
   state: EventState;
 }
 
+/** 登山的目标：一句话和截止的时刻（那天傍晚 18:00） */
+export interface Goal {
+  title: string;
+  due: number;
+  /** 什么时候出发（第一次设这个目标的时刻）；回望时从这里画起 */
+  start?: number;
+}
+
 /**
  * 每次重绘时，时间模型交给世界的一份快照。
  * 世界只读它，不改它；也不需要知道数据从哪来。
@@ -33,4 +41,6 @@ export interface Frame {
   /** 视角所在的时间（现在 + 拖动偏移） */
   view: number;
   events: EventView[];
+  /** 自己设的目标；没设时为 null（登山模式用，其他世界可以不管） */
+  goal: Goal | null;
 }

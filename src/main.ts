@@ -1,14 +1,16 @@
 import './styles.css';
-import type { CalEvent, Frame } from './model/types';
+import type { CalEvent, Frame, Goal } from './model/types';
 import { Viewport } from './model/viewport';
 import { nextStateChange, prepLeft, withStates } from './model/states';
 import { fmtDay, fmtTime, HOUR, MINUTE } from './model/time';
 import { openStore } from './data/store';
 import { Sheet } from './ui/sheet';
 import { ListView } from './ui/list';
+import { GoalForm } from './ui/goal';
 import { type Theme, themeAt } from './model/daylight';
-import type { World } from './worlds/world';
+import { type World, GOAL_HIT } from './worlds/world';
 import { HikeWorld } from './worlds/hike';
+import { ClimbWorld, summitOf } from './worlds/climb';
 
 const canvas = document.getElementById('world') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
@@ -17,18 +19,70 @@ const viewport = new Viewport();
 const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
 viewport.reducedMotion = motionQuery.matches;
 motionQuery.addEventListener('change', () => { viewport.reducedMotion = motionQuery.matches; });
-const world: World = new HikeWorld(() => requestRender());
+
+/* ---------- 模式 ----------
+ * 每种模式是一个世界。切换时只换世界，时间模型和数据不动；选过的模式记在本机。
+ */
+const WORLDS: Record<string, () => World> = {
+  hike: () => new HikeWorld(() => requestRender()),
+  climb: () => new ClimbWorld(() => requestRender()),
+};
+const made = new Map<string, World>();
+let world: World = useWorld(readMode());
+
+function readMode(): string {
+  try {
+    const m = localStorage.getItem('flow.mode');
+    // 只认自己定义的模式（`in` 会把 toString 之类继承来的也算进去）
+    if (m && Object.prototype.hasOwnProperty.call(WORLDS, m)) return m;
+  } catch { /* 读不到就用默认 */ }
+  return 'hike';
+}
+
+function useWorld(id: string): World {
+  let w = made.get(id);
+  if (!w) { w = WORLDS[id](); made.set(id, w); }
+  for (const b of document.querySelectorAll<HTMLButtonElement>('#modes button')) {
+    b.setAttribute('aria-pressed', String(b.dataset.mode === id));
+  }
+  (document.getElementById('goal-btn') as HTMLButtonElement).hidden = id !== 'climb';
+  (document.getElementById('overview') as HTMLButtonElement).hidden = !w.setOverview;
+  return w;
+}
+
+document.getElementById('modes')!.addEventListener('click', e => {
+  const id = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-mode]')?.dataset.mode;
+  if (!id || id === world.id) return;
+  setOverview(false);
+  // 换下来的世界不再重画，过渡停在半路；直接收回，下次切回来就是平常的样子
+  world.setOverview?.(false, true);
+  world = useWorld(id);
+  try { localStorage.setItem('flow.mode', id); } catch { /* 记不住也没关系 */ }
+  lastDescription = '';
+  resize();
+});
 
 /* ---------- 日程数据 ----------
  * 存在本机（IndexedDB）。启动时全部读进来，改动后重新读一遍。
  */
 let events: CalEvent[] = [];
+/** 登山的目标（山顶的旗） */
+let goal: Goal | null = null;
 let sheet: Sheet | null = null;
 let list: ListView | null = null;
+let goalForm: GoalForm | null = null;
 const note = document.getElementById('note') as HTMLElement;
 
 openStore().then(async store => {
   events = await store.all();
+  goal = await store.goal();
+  goalForm = new GoalForm({
+    store,
+    changed(g) {
+      goal = g;
+      requestRender();
+    },
+  });
   sheet = new Sheet({
     store,
     find: id => events.find(e => e.id === id),
@@ -77,6 +131,28 @@ function showNote(persistent: boolean) {
 
 document.getElementById('open-list')!.addEventListener('click', () => list?.open());
 
+function openGoal() {
+  goalForm?.open(goal, summitOf(Date.now(), null).ms);
+}
+document.getElementById('goal-btn')!.addEventListener('click', openGoal);
+
+/* ---------- 回望（登山） ----------
+ * 拉远看整座山。拉远时视角先回到“现在”，期间不能拖。
+ */
+let overview = false;
+const overviewBtn = document.getElementById('overview') as HTMLButtonElement;
+function setOverview(on: boolean) {
+  if (on === overview) return;
+  overview = on;
+  if (on) viewport.home(performance.now());
+  world.setOverview?.(on, viewport.reducedMotion);
+  overviewBtn.textContent = on ? '回到眼前' : '回望';
+  overviewBtn.setAttribute('aria-pressed', String(on));
+  lastDescription = '';
+  requestRender();
+}
+overviewBtn.addEventListener('click', () => setOverview(!overview));
+
 document.getElementById('add')!.addEventListener('click', () => {
   // 新建的日程默认放在正在看的时间
   sheet?.openNew(viewport.viewTime(Date.now()));
@@ -120,7 +196,7 @@ function requestRender() {
 }
 
 function makeFrame(now: number): Frame {
-  return { now, view: viewport.viewTime(now), events: withStates(events, now) };
+  return { now, view: viewport.viewTime(now), events: withStates(events, now), goal };
 }
 
 function render() {
@@ -163,28 +239,33 @@ document.addEventListener('visibilitychange', () => {
  * 松手后顺势滑一段，停一会儿，再慢慢回到“现在”。
  */
 let dragId: number | null = null;
+let lastX = 0;
 let lastY = 0;
 /** 按下的位置和时刻：没怎么动就松手，算作点一下 */
 let down = { x: 0, y: 0, t: 0, moved: 0 };
 
+const localX = (e: { clientX: number }) => e.clientX - canvas.getBoundingClientRect().left;
 const localY = (e: { clientY: number }) => e.clientY - canvas.getBoundingClientRect().top;
 
 canvas.addEventListener('pointerdown', e => {
   if (dragId !== null || (e.pointerType === 'mouse' && e.button !== 0)) return;
   dragId = e.pointerId;
+  lastX = localX(e);
   lastY = localY(e);
   down = { x: e.clientX, y: e.clientY, t: performance.now(), moved: 0 };
   canvas.setPointerCapture(e.pointerId);
   canvas.classList.add('dragging');
-  viewport.grab(performance.now());
+  // 回望时视角正回到现在，不让拖动打断；点一下仍然能打开详情
+  if (!overview) viewport.grab(performance.now());
   requestRender();
 });
 
 canvas.addEventListener('pointermove', e => {
   if (e.pointerId !== dragId) return;
-  const y = localY(e);
+  const x = localX(e), y = localY(e);
   down.moved = Math.max(down.moved, Math.hypot(e.clientX - down.x, e.clientY - down.y));
-  viewport.dragBy(world.dragHours(lastY, y - lastY), performance.now());
+  if (!overview) viewport.dragBy(world.dragHours(lastX, lastY, x - lastX, y - lastY), performance.now());
+  lastX = x;
   lastY = y;
   requestRender();
 });
@@ -193,13 +274,14 @@ function endDrag(e: PointerEvent) {
   if (e.pointerId !== dragId) return;
   dragId = null;
   canvas.classList.remove('dragging');
-  viewport.release(performance.now());
+  if (!overview) viewport.release(performance.now());
   requestRender();
   // 点一下光点：打开详情
   if (e.type === 'pointerup' && down.moved < 8 && performance.now() - down.t < 600) {
     const r = canvas.getBoundingClientRect();
     const id = world.hitTest(e.clientX - r.left, e.clientY - r.top);
-    if (id) sheet?.openDetail(id);
+    if (id === GOAL_HIT) openGoal();
+    else if (id) sheet?.openDetail(id);
   }
 }
 canvas.addEventListener('pointerup', endDrag);
@@ -207,16 +289,23 @@ canvas.addEventListener('pointercancel', endDrag);
 
 canvas.addEventListener('wheel', e => {
   e.preventDefault();
-  if (dragId !== null) return;
-  // 滚轮按行或按页滚动时换成像素；往下滚 = 往未来
+  if (dragId !== null || overview) return;
+  // 滚轮按行或按页滚动时换成像素；往下滚、往右滚 = 往未来
   const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? canvas.clientHeight : 1;
-  viewport.scrollBy(world.dragHours(localY(e), e.deltaY * unit), performance.now());
+  viewport.scrollBy(world.dragHours(localX(e), localY(e), -e.deltaX * unit, e.deltaY * unit), performance.now());
   requestRender();
 }, { passive: false });
 
 const KEYS: Record<string, number> = { ArrowDown: 1, ArrowUp: -1, PageDown: 24, PageUp: -24 };
 window.addEventListener('keydown', e => {
-  if (e.altKey || e.ctrlKey || e.metaKey || dragId !== null || sheet?.isOpen || list?.isOpen) return;
+  if (e.altKey || e.ctrlKey || e.metaKey || dragId !== null || sheet?.isOpen || list?.isOpen || goalForm?.isOpen) return;
+  if (overview) {
+    // 回望时不移动视角；Esc 回到眼前。点过“回望”后焦点还在那个按钮上，所以先于下面的过滤处理
+    if (e.key !== 'Escape') return;
+    setOverview(false);
+    e.preventDefault();
+    return;
+  }
   if (e.target instanceof HTMLElement && e.target.closest('input, textarea, select, button')) return;
   const t = performance.now();
   if (e.key in KEYS) viewport.nudge(KEYS[e.key], t);
@@ -269,12 +358,20 @@ let lastDescription = '';
 function describe(f: Frame) {
   const live = f.events.filter(e => e.state === 'live');
   const next = f.events.find(e => e.state === 'soon' || e.state === 'future');
-  let text = `远足视图。现在是${fmtDay(f.now)} ${fmtTime(f.now)}。`;
+  let text = `${world.name}视图。现在是${fmtDay(f.now)} ${fmtTime(f.now)}。`;
   if (Math.abs(f.view - f.now) > HOUR / 4) text += `正在看${fmtDay(f.view)} ${fmtTime(f.view)}。`;
   if (live.length) text += `正在进行：${live.map(e => e.title).join('、')}。`;
   if (next) text += `下一个日程：${next.title}，${fmtDay(next.start)} ${fmtTime(next.start)} 开始。`;
   if (next?.state === 'soon' && prepLeft(next)) text += `还有 ${prepLeft(next)} 项准备没做完。`;
-  text += '上下拖动可以去看未来或回看过去，方向键按小时移动，Home 键回到现在。右上角的“列表”按钮可以按列表查看和搜索全部日程。';
+  text += world.describe?.(f) ?? '';
+  if (overview) {
+    // 回望时不能拖、方向键也不动，说明要和实际一致
+    text += '正在回望整座山，这时不能拖动。按 Esc 或左下角的“回到眼前”回来。';
+  } else {
+    text += world.id === 'climb' ? '左右或上下拖动' : '上下拖动';
+    text += '可以去看未来或回看过去，方向键按小时移动，Home 键回到现在。';
+  }
+  text += '右上角的“列表”按钮可以按列表查看和搜索全部日程，左上角可以切换远足和登山两种模式。';
   if (text !== lastDescription) {
     canvas.setAttribute('aria-label', text);
     lastDescription = text;

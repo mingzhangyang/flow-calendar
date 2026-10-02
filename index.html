@@ -13,8 +13,14 @@
   <button id="viewing" class="viewing" type="button">
     <span class="when"></span><span class="back">回到现在</span>
   </button>
+  <div id="modes" class="modes" role="group" aria-label="模式">
+    <button type="button" data-mode="hike" aria-pressed="true">远足</button>
+    <button type="button" data-mode="climb" aria-pressed="false">登山</button>
+  </div>
+  <button id="goal-btn" class="goal-btn" type="button" hidden>设目标</button>
   <button id="open-list" class="open-list" type="button">列表</button>
   <button id="add" class="add" type="button"><span aria-hidden="true">＋</span>新建</button>
+  <button id="overview" class="overview" type="button" aria-pressed="false" hidden>回望</button>
   <p id="note" class="note" hidden></p>
 </main>
 <dialog id="list" class="list" aria-label="日程列表">
@@ -69,6 +75,21 @@
     <label>准备事项（每行一条）<textarea name="prep" rows="3" maxlength="2000" placeholder="例如：带上上周的数据"></textarea></label>
     <p class="error" role="alert"></p>
     <div class="actions">
+      <span class="grow"></span>
+      <button type="button" class="cancel">取消</button>
+      <button type="submit" class="primary">保存</button>
+    </div>
+  </form>
+</dialog>
+<dialog id="goal" class="sheet" aria-label="登山的目标">
+  <form class="form" novalidate>
+    <h2>目标</h2>
+    <p class="hint">山顶的旗插在截止日。做过的事一层层垒起来，一步步往那里爬。</p>
+    <label>目标<input name="title" maxlength="40" autocomplete="off" enterkeyhint="done" placeholder="例如：新版上线"></label>
+    <label>截止日<input name="date" type="date"></label>
+    <p class="error" role="alert"></p>
+    <div class="actions">
+      <button type="button" class="clear del">清除目标</button>
       <span class="grow"></span>
       <button type="button" class="cancel">取消</button>
       <button type="submit" class="primary">保存</button>

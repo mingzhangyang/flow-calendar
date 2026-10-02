@@ -1,5 +1,5 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
-import type { CalEvent } from '../model/types';
+import type { CalEvent, Goal } from '../model/types';
 
 /**
  * 日程存在本机的 IndexedDB 里。
@@ -8,6 +8,8 @@ import type { CalEvent } from '../model/types';
  */
 interface Schema extends DBSchema {
   events: { key: string; value: CalEvent; indexes: { start: number } };
+  /** 零散的设置，比如登山的目标（键 'goal'） */
+  meta: { key: string; value: unknown };
 }
 
 export interface Store {
@@ -17,6 +19,9 @@ export interface Store {
   remove(id: string): Promise<void>;
   /** 导入：同一个 id 的覆盖，但保留已经写下的准备事项和结论。返回新加了几条、更新了几条 */
   importMany(evs: CalEvent[]): Promise<{ added: number; updated: number }>;
+  /** 登山的目标；没设时为 null */
+  goal(): Promise<Goal | null>;
+  setGoal(g: Goal | null): Promise<void>;
 }
 
 function merge(ev: CalEvent, old: CalEvent | undefined): CalEvent {
@@ -29,9 +34,10 @@ function merge(ev: CalEvent, old: CalEvent | undefined): CalEvent {
 
 export async function openStore(): Promise<Store> {
   try {
-    const db = await openDB<Schema>('flow-calendar', 1, {
-      upgrade(db) {
-        db.createObjectStore('events', { keyPath: 'id' }).createIndex('start', 'start');
+    const db = await openDB<Schema>('flow-calendar', 2, {
+      upgrade(db, oldVersion) {
+        if (oldVersion < 1) db.createObjectStore('events', { keyPath: 'id' }).createIndex('start', 'start');
+        if (oldVersion < 2) db.createObjectStore('meta');
       },
     });
     return idbStore(db);
@@ -57,11 +63,14 @@ function idbStore(db: IDBPDatabase<Schema>): Store {
       await tx.done;
       return { added, updated };
     },
+    goal: async () => asGoal(await db.get('meta', 'goal')),
+    setGoal: async g => { if (g) await db.put('meta', g, 'goal'); else await db.delete('meta', 'goal'); },
   };
 }
 
 function memoryStore(): Store {
   const map = new Map<string, CalEvent>();
+  let goal: Goal | null = null;
   return {
     persistent: false,
     all: async () => [...map.values()].sort((a, b) => a.start - b.start),
@@ -76,7 +85,17 @@ function memoryStore(): Store {
       }
       return { added, updated };
     },
+    goal: async () => goal,
+    setGoal: async g => { goal = g; },
   };
+}
+
+/** 读出来的东西不一定是完整的目标（比如手改过），不像就当没设 */
+function asGoal(v: unknown): Goal | null {
+  const g = v as Goal | undefined;
+  if (!g || typeof g.title !== 'string' || !Number.isFinite(g.due)) return null;
+  // 出发时刻可以没有，但有就得是个正常的数，否则回望会算坏
+  return g.start === undefined || Number.isFinite(g.start) ? g : { title: g.title, due: g.due };
 }
 
 export function newId(): string {

@@ -128,6 +128,29 @@ body { overflow: hidden; -webkit-font-smoothing: antialiased; overscroll-behavio
 .form .error { color: #C4452A; font-size: 13px; min-height: 1.2em; }
 :root[data-theme="dark"] .form .error { color: #F09A80; }
 
+.sheet .hint { color: var(--ink-soft); font-size: 14px; margin-bottom: 14px; }
+
+/* 登山模式的“回望”：左下角，和“新建”一排 */
+.overview {
+  position: absolute; left: 16px; bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+  padding: 10px 16px; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--panel); color: var(--ink); font: 500 15px/1.2 var(--sans); cursor: pointer;
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+}
+.overview[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.overview:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* 有“回望”按钮时，提示挪到它上面 */
+.overview:not([hidden]) ~ .note { bottom: calc(env(safe-area-inset-bottom, 0px) + 68px); }
+
+/* 登山模式的“设目标”：平时藏着（点山顶的旗就行），用键盘走到时才露出来 */
+.goal-btn {
+  position: absolute; left: 16px; top: calc(env(safe-area-inset-top, 0px) + 56px);
+  padding: 8px 14px; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--panel); color: var(--ink); font: 500 14px/1.2 var(--sans); cursor: pointer;
+  opacity: 0; pointer-events: none;
+}
+.goal-btn:focus-visible { opacity: 1; pointer-events: auto; outline: 2px solid var(--accent); outline-offset: 2px; z-index: 1; }
+
 /* 准备事项和结论 */
 .sheet h3 { margin: 16px 0 6px; font-size: 13px; font-weight: 600; color: var(--ink-soft); }
 .sheet .checks { list-style: none; margin: 0; padding: 0; }
@@ -149,8 +172,21 @@ body { overflow: hidden; -webkit-font-smoothing: antialiased; overscroll-behavio
   -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
 }
 .open-list:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-/* 窄屏上“正在看”提示居中，给右上角的按钮让出位置 */
-@media (max-width: 420px) { .viewing { left: 16px; transform: translate(0, -6px); } .viewing.show { transform: none; } }
+/* 左上角切换模式 */
+.modes {
+  position: absolute; left: 16px; top: calc(env(safe-area-inset-top, 0px) + 12px);
+  display: flex; padding: 3px; gap: 2px; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--panel);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+}
+.modes button {
+  padding: 5px 12px; border: 0; border-radius: 999px;
+  background: transparent; color: var(--ink-soft); font: 500 14px/1.2 var(--sans); cursor: pointer;
+}
+.modes button[aria-pressed="true"] { background: var(--accent); color: var(--bg); font-weight: 600; }
+.modes button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* 窄屏上“正在看”提示放到按钮下面一行，免得压住左右上角的按钮 */
+@media (max-width: 520px) { .viewing { left: 16px; top: calc(env(safe-area-inset-top, 0px) + 56px); transform: translate(0, -6px); } .viewing.show { transform: none; } }
 
 .list {
   width: 100%; height: 100%; max-width: none; max-height: none; margin: 0;

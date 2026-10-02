@@ -1,4 +1,5 @@
-import { rng } from './paint';
+import { mixc, rgba, rng } from './paint';
+import { type Look, INK, OCHRE } from './look';
 
 /**
  * 绢的纹理：细密的经线、纬线和一点斑驳。
@@ -40,4 +41,20 @@ export function silkPattern(ctx: CanvasRenderingContext2D): CanvasPattern {
   const pattern = ctx.createPattern(c, 'repeat')!;
   cached = { ctx, pattern };
   return pattern;
+}
+
+/** 整幅画盖一层绢的经纬和四角的旧色（所有东西画完、文字之前） */
+export function drawSilk(ctx: CanvasRenderingContext2D, W: number, H: number, look: Look) {
+  ctx.save();
+  ctx.fillStyle = silkPattern(ctx);
+  ctx.globalAlpha = 0.55 + 0.25 * look.daylight;
+  ctx.fillRect(0, 0, W, H);
+  ctx.globalAlpha = 1;
+  const r = Math.hypot(W, H) / 2;
+  const g = ctx.createRadialGradient(W / 2, H * 0.45, r * 0.45, W / 2, H * 0.45, r);
+  g.addColorStop(0, rgba(OCHRE, 0));
+  g.addColorStop(1, rgba(mixc(OCHRE, INK, 0.4), 0.16));
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+  ctx.restore();
 }
