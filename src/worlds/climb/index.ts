@@ -783,17 +783,18 @@ export class ClimbWorld implements World {
         // 走过的营地收起来，留下一座石堆；写了结论的留得深一些，钤一方小朱印
         const ch = Math.max(4, size * 0.6);
         const a = ev.outcome ? 0.95 : 0.6;
-        if (this.art.cairn.ready && ch > 6) {
-          this.art.cairn.drawSmall(ctx, x, this.footY(x, ch * this.art.cairn.aspect * 0.7) + 1, ch, look, a, hashStr(ev.id) % 2 === 0);
-        }
+        const drawn = this.art.cairn.ready && ch > 6;
+        // 落脚点只算一次：石堆、朱印、点击范围和标签都跟着它
+        const fy = drawn ? this.footY(x, ch * this.art.cairn.aspect * 0.7) + 1 : y;
+        if (drawn) this.art.cairn.drawSmall(ctx, x, fy, ch, look, a, hashStr(ev.id) % 2 === 0);
         else drawOrb(ctx, { x, wy: y, z: 1, r: Math.max(1.3, ch * 0.3) }, paint, a);
-        if (ev.outcome && ch > 6) {
+        if (ev.outcome && drawn) {
           const q = Math.max(3, ch * 0.22);
           ctx.fillStyle = rgba(red, 0.9);
-          ctx.fillRect(x + ch * 0.38, y - ch * 0.95, q, q);
+          ctx.fillRect(x + ch * 0.38, fy - ch * 0.95, q, q);
         }
-        this.hits.push({ id: ev.id, x, y, w: Math.max(ch * 1.2, 28), h: Math.max(ch * 1.2, 28) });
-        if (k > 0.5) labels.push([it, y - ch - 4]);
+        this.hits.push({ id: ev.id, x, y: fy, w: Math.max(ch * 1.2, 28), h: Math.max(ch * 1.2, 28) });
+        if (k > 0.5) labels.push([it, fy - ch - 4]);
         continue;
       }
 

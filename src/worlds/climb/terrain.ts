@@ -45,11 +45,16 @@ export class Terrain {
     this.h0 = h0;
     const raw = new Float32Array(n);
     for (const e of events) {
-      // 全天日程（节日、出差）不算忙，否则一天就垒起一面悬崖
-      if (isAllDay(e.start, e.end) || e.end - e.start >= DAY) continue;
+      // 全天日程（节日、假期）不算忙，否则一天就垒起一面悬崖
+      if (isAllDay(e.start, e.end)) continue;
+      // 一连好几天的（会议、出差）只算白天，夜里不算
+      const long = e.end - e.start >= DAY;
       const i0 = Math.max(0, Math.round((localHours(e.start) - h0) / STEP));
       const i1 = Math.min(n, Math.round((localHours(e.end) - h0) / STEP));
-      for (let i = i0; i < i1; i++) raw[i] = 1; // 叠在一起的日程只算一次
+      for (let i = i0; i < i1; i++) {
+        const b = long ? daytime(h0 + i * STEP) : 1;
+        if (b > raw[i]) raw[i] = b; // 叠在一起的日程只算一次
+      }
     }
     const busy = blur(blur(raw, 5), 5);
 

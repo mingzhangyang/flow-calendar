@@ -1,5 +1,5 @@
 import type { Goal } from '../model/types';
-import { DAY, startOfDay } from '../model/time';
+import { addDays, startOfDay } from '../model/time';
 import type { Store } from '../data/store';
 
 /** 截止日最远能设到多少天以后（和视角能去的范围一样） */
@@ -44,7 +44,8 @@ export class GoalForm {
     this.date.value = toDateInput(goal?.due ?? fallbackDue);
     const today = startOfDay(Date.now());
     this.date.min = toDateInput(today);
-    this.date.max = toDateInput(today + MAX_DAYS * DAY);
+    // 按日历往后数，跨过夏令时切换也是整 60 天
+    this.date.max = toDateInput(addDays(today, MAX_DAYS));
     this.clearBtn.hidden = !goal;
     if (!this.dlg.open) this.dlg.showModal();
     this.title.focus();
@@ -58,7 +59,7 @@ export class GoalForm {
     if (!title) problem = '写一句目标，比如“新版上线”。';
     else if (day === null) problem = '选一个截止日。';
     else if (day < today) problem = '截止日不能早于今天。';
-    else if (day > today + MAX_DAYS * DAY + DAY / 2) problem = `截止日最远设到 ${MAX_DAYS} 天以后。`;
+    else if (day > addDays(today, MAX_DAYS)) problem = `截止日最远设到 ${MAX_DAYS} 天以后。`;
     if (problem) {
       this.error.textContent = problem;
       (title ? this.date : this.title).focus();
