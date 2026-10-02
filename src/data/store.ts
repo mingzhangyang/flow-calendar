@@ -93,7 +93,9 @@ function memoryStore(): Store {
 /** 读出来的东西不一定是完整的目标（比如手改过），不像就当没设 */
 function asGoal(v: unknown): Goal | null {
   const g = v as Goal | undefined;
-  return g && typeof g.title === 'string' && typeof g.due === 'number' && Number.isFinite(g.due) ? g : null;
+  if (!g || typeof g.title !== 'string' || !Number.isFinite(g.due)) return null;
+  // 出发时刻可以没有，但有就得是个正常的数，否则回望会算坏
+  return g.start === undefined || Number.isFinite(g.start) ? g : { title: g.title, due: g.due };
 }
 
 export function newId(): string {

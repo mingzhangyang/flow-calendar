@@ -33,7 +33,8 @@ let world: World = useWorld(readMode());
 function readMode(): string {
   try {
     const m = localStorage.getItem('flow.mode');
-    if (m && m in WORLDS) return m;
+    // 只认自己定义的模式（`in` 会把 toString 之类继承来的也算进去）
+    if (m && Object.prototype.hasOwnProperty.call(WORLDS, m)) return m;
   } catch { /* 读不到就用默认 */ }
   return 'hike';
 }
@@ -360,8 +361,14 @@ function describe(f: Frame) {
   if (next) text += `下一个日程：${next.title}，${fmtDay(next.start)} ${fmtTime(next.start)} 开始。`;
   if (next?.state === 'soon' && prepLeft(next)) text += `还有 ${prepLeft(next)} 项准备没做完。`;
   text += world.describe?.(f) ?? '';
-  text += world.id === 'climb' ? '左右或上下拖动' : '上下拖动';
-  text += '可以去看未来或回看过去，方向键按小时移动，Home 键回到现在。右上角的“列表”按钮可以按列表查看和搜索全部日程，左上角可以切换远足和登山两种模式。';
+  if (overview) {
+    // 回望时不能拖、方向键也不动，说明要和实际一致
+    text += '正在回望整座山，这时不能拖动。按 Esc 或左下角的“回到眼前”回来。';
+  } else {
+    text += world.id === 'climb' ? '左右或上下拖动' : '上下拖动';
+    text += '可以去看未来或回看过去，方向键按小时移动，Home 键回到现在。';
+  }
+  text += '右上角的“列表”按钮可以按列表查看和搜索全部日程，左上角可以切换远足和登山两种模式。';
   if (text !== lastDescription) {
     canvas.setAttribute('aria-label', text);
     lastDescription = text;

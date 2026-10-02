@@ -1,5 +1,5 @@
 import type { CalEvent } from '../../model/types';
-import { DAY, isAllDay, localHours } from '../../model/time';
+import { isAllDay, localHours } from '../../model/time';
 
 /**
  * 山的形状：做过（和要做）的事一层层垒起来，就是海拔。
@@ -25,6 +25,8 @@ export class Terrain {
   private busy = new Float32Array(0);
   private alt = new Float32Array(0);
   private key = '';
+  /** 上次算的时候各个日程的开始、结束；和这次逐个比，一点不同就重算 */
+  private times: number[] = [];
 
   /**
    * 按日程和现在算一遍（没变就跳过）。summitH 是山顶的时刻，fromH 是出发的时刻（本地小时）：
@@ -32,12 +34,15 @@ export class Terrain {
    */
   update(events: CalEvent[], now: number, summitH: number, fromH: number) {
     const day0 = Math.floor(localHours(now) / 24);
-    let sig = 0;
-    for (const e of events) sig = (sig * 31 + (e.start % 9_999_991) + 3 * (e.end % 9_999_991)) % 2_147_483_647;
     const from = Math.min(day0 - 9, Math.floor(fromH / 24) - 1);
-    const key = `${day0}|${summitH}|${from}|${events.length}|${sig}`;
-    if (key === this.key) return;
+    const key = `${day0}|${summitH}|${from}`;
+    let same = key === this.key && this.times.length === events.length * 2;
+    for (let i = 0; same && i < events.length; i++) {
+      same = this.times[2 * i] === events[i].start && this.times[2 * i + 1] === events[i].end;
+    }
+    if (same) return;
     this.key = key;
+    this.times = events.flatMap(e => [e.start, e.end]);
 
     // 往回 9 天（或到出发前一天）、往前 64 天：比视角能去的范围再多一点
     const h0 = from * 24, h1 = (day0 + 64) * 24;
@@ -47,10 +52,12 @@ export class Terrain {
     for (const e of events) {
       // 全天日程（节日、假期）不算忙，否则一天就垒起一面悬崖
       if (isAllDay(e.start, e.end)) continue;
-      // 一连好几天的（会议、出差）只算白天，夜里不算
-      const long = e.end - e.start >= DAY;
-      const i0 = Math.max(0, Math.round((localHours(e.start) - h0) / STEP));
-      const i1 = Math.min(n, Math.round((localHours(e.end) - h0) / STEP));
+      // 一连好几天的（会议、出差）只算白天，夜里不算。
+      // 长短按本地钟点算：跨夏令时那天的“9 点到第二天 9 点”只有 23 个小时，也算一整天
+      const s = localHours(e.start), en = localHours(e.end);
+      const long = en - s >= 24;
+      const i0 = Math.max(0, Math.round((s - h0) / STEP));
+      const i1 = Math.min(n, Math.round((en - h0) / STEP));
       for (let i = i0; i < i1; i++) {
         const b = long ? daytime(h0 + i * STEP) : 1;
         if (b > raw[i]) raw[i] = b; // 叠在一起的日程只算一次
