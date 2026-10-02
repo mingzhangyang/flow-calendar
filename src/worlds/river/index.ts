@@ -8,6 +8,7 @@ import {
 import { type Sky, celestial, drawSky, nightAt, skyAt } from './sky';
 import { type Look, lookAt } from './look';
 import { daylightAt } from '../../model/daylight';
+import { Scenery } from './scenery';
 
 /**
  * 河流世界
@@ -35,6 +36,7 @@ export class RiverWorld implements World {
   private insetBottom = 0;
   private T = 0;
   private hits: Hit[] = [];
+  private scenery = new Scenery();
 
   resize(w: number, h: number, insets: { top: number; bottom: number }) {
     this.W = w; this.H = h;
@@ -43,6 +45,7 @@ export class RiverWorld implements World {
     this.NOWY = h * 0.7;
     this.D = this.NOWY - this.HZ;
     this.S = Math.min(w * 0.55, h * 0.6); // 宽屏上不让河面和光球过大
+    this.scenery.resize(w, h, this.HZ);
   }
 
   private z(h: number) { return 1 + (h - this.T) / TAU; }
@@ -63,10 +66,12 @@ export class RiverWorld implements World {
     const look = lookAt(sky, daylightAt(f.view));
 
     drawSky(ctx, W, HZ, sky, night, body);
+    this.scenery.drawFar(ctx, sky, night, this.T);
     this.drawWater(ctx, look, body);
     this.drawWaterLines(ctx, look);
     this.drawBank(ctx, -1, sky, look);
     this.drawBank(ctx, 1, sky, look);
+    this.scenery.drawBanks(ctx, (X, h) => this.project(X, h), bend, this.T, TAU, look);
     this.drawHaze(ctx, sky);
     this.drawStreaks(ctx, look);
     this.drawHorizonMarks(ctx, f.now, look);
