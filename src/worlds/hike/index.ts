@@ -10,7 +10,7 @@ import { type Sky, celestial, drawSky, nightAt, skyAt } from './sky';
 import { type Look, OCHRE, INK, SILK, SHELL_WHITE, VERMILION, lookAt, pigment } from './look';
 import { daylightAt } from '../../model/daylight';
 import { Scenery } from './scenery';
-import { silkPattern } from './silk';
+import { drawSilk } from './silk';
 
 /**
  * 远足世界：沿着一条土路往远处走
@@ -119,12 +119,12 @@ export class HikeWorld implements World {
     this.drawMist(ctx, sky, look);
     this.drawPast(ctx, sky, look);
     this.drawHorizonMarks(ctx, f.now, look);
-    this.drawSilk(ctx, look);
+    drawSilk(ctx, W, H, look);
     this.drawEvents(ctx, f.events, look);
     this.drawNowLine(ctx, f.now, look);
   }
 
-  dragHours(y: number, dy: number): number {
+  dragHours(_x: number, y: number, _dx: number, dy: number): number {
     // 屏幕 y 处的时刻 h = T + (D / (y - HZ) - 1) * TAU。
     // 让手指下的 h 不变，T 就要变 TAU * D / (y - HZ)² * dy。
     // 越靠近地平线一步走得越远；离地平线太近时封顶，免得手一抖就跳出好几天。
@@ -404,23 +404,6 @@ export class HikeWorld implements World {
       ellipsePath(ctx, x, y, rr * 1.3, rr * 0.7);
       ctx.fill();
     }
-    ctx.restore();
-  }
-
-  /** 整幅画盖一层绢的经纬和四角的旧色 */
-  private drawSilk(ctx: CanvasRenderingContext2D, look: Look) {
-    const { W, H } = this;
-    ctx.save();
-    ctx.fillStyle = silkPattern(ctx);
-    ctx.globalAlpha = 0.55 + 0.25 * look.daylight;
-    ctx.fillRect(0, 0, W, H);
-    ctx.globalAlpha = 1;
-    const r = Math.hypot(W, H) / 2;
-    const g = ctx.createRadialGradient(W / 2, H * 0.45, r * 0.45, W / 2, H * 0.45, r);
-    g.addColorStop(0, rgba(OCHRE, 0));
-    g.addColorStop(1, rgba(mixc(OCHRE, INK, 0.4), 0.16));
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, W, H);
     ctx.restore();
   }
 

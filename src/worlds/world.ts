@@ -15,10 +15,10 @@ export interface World {
   draw(ctx: CanvasRenderingContext2D, frame: Frame): void;
 
   /**
-   * 在屏幕高度 y 处竖直拖动 dy 像素，视角应该移动多少小时（正数是往未来）。
+   * 在屏幕上 (x, y) 处拖动 (dx, dy) 像素，视角应该移动多少小时（正数是往未来）。
    * 世界按自己的透视来换算，让手指下的东西跟着手指走。
    */
-  dragHours(y: number, dy: number): number;
+  dragHours(x: number, y: number, dx: number, dy: number): number;
 
   /** 屏幕上的一点落在哪个日程上，没有则返回 null */
   hitTest(x: number, y: number): string | null;

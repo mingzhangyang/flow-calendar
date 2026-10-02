@@ -149,8 +149,21 @@ body { overflow: hidden; -webkit-font-smoothing: antialiased; overscroll-behavio
   -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
 }
 .open-list:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-/* 窄屏上“正在看”提示居中，给右上角的按钮让出位置 */
-@media (max-width: 420px) { .viewing { left: 16px; transform: translate(0, -6px); } .viewing.show { transform: none; } }
+/* 左上角切换模式 */
+.modes {
+  position: absolute; left: 16px; top: calc(env(safe-area-inset-top, 0px) + 12px);
+  display: flex; padding: 3px; gap: 2px; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--panel);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+}
+.modes button {
+  padding: 5px 12px; border: 0; border-radius: 999px;
+  background: transparent; color: var(--ink-soft); font: 500 14px/1.2 var(--sans); cursor: pointer;
+}
+.modes button[aria-pressed="true"] { background: var(--accent); color: var(--bg); font-weight: 600; }
+.modes button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* 窄屏上“正在看”提示放到按钮下面一行，免得压住左右上角的按钮 */
+@media (max-width: 520px) { .viewing { left: 16px; top: calc(env(safe-area-inset-top, 0px) + 56px); transform: translate(0, -6px); } .viewing.show { transform: none; } }
 
 .list {
   width: 100%; height: 100%; max-width: none; max-height: none; margin: 0;
