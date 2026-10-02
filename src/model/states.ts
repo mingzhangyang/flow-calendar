@@ -25,3 +25,8 @@ export function nextStateChange(events: CalEvent[], now: number): number {
   }
   return next;
 }
+
+/** 还没做完的准备事项有几项 */
+export function prepLeft(ev: CalEvent): number {
+  return ev.prep?.filter(p => !p.done).length ?? 0;
+}

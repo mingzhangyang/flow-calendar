@@ -5,6 +5,15 @@ export interface CalEvent {
   start: number;
   end: number;
   notes?: string;
+  /** 会前准备事项，临近时提醒 */
+  prep?: PrepItem[];
+  /** 结束后写下的一两句结论；写了就成了一条记录 */
+  outcome?: string;
+}
+
+export interface PrepItem {
+  text: string;
+  done: boolean;
 }
 
 /** 日程相对“现在”的状态 */

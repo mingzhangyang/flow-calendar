@@ -1,7 +1,7 @@
 import './styles.css';
 import type { CalEvent, Frame } from './model/types';
 import { Viewport } from './model/viewport';
-import { nextStateChange, withStates } from './model/states';
+import { nextStateChange, prepLeft, withStates } from './model/states';
 import { fmtDay, fmtTime, HOUR, MINUTE } from './model/time';
 import { openStore } from './data/store';
 import { Sheet } from './ui/sheet';
@@ -243,6 +243,7 @@ function describe(f: Frame) {
   if (Math.abs(f.view - f.now) > HOUR / 4) text += `正在看${fmtDay(f.view)} ${fmtTime(f.view)}。`;
   if (live.length) text += `正在进行：${live.map(e => e.title).join('、')}。`;
   if (next) text += `下一个日程：${next.title}，${fmtDay(next.start)} ${fmtTime(next.start)} 开始。`;
+  if (next?.state === 'soon' && prepLeft(next)) text += `还有 ${prepLeft(next)} 项准备没做完。`;
   text += '上下拖动可以去看未来或回看过去，方向键按小时移动，Home 键回到现在。';
   if (text !== lastDescription) {
     canvas.setAttribute('aria-label', text);

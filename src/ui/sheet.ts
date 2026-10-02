@@ -1,5 +1,5 @@
-import type { CalEvent } from '../model/types';
-import { stateOf } from '../model/states';
+import type { CalEvent, PrepItem } from '../model/types';
+import { prepLeft, stateOf } from '../model/states';
 import { DAY, HOUR, MINUTE, fmtDay, fmtTime, startOfDay } from '../model/time';
 import { type Store, newId } from '../data/store';
 
@@ -23,11 +23,20 @@ export class Sheet {
   /** 正在看或正在改的日程；新建时为 null */
   private current: CalEvent | null = null;
   private confirming = false;
+  private editingOutcome = false;
+  private outcome = this.detail.querySelector('.outcome') as HTMLElement;
+  private outcomeInput = this.outcome.querySelector('.outcome-input') as HTMLTextAreaElement;
+  private outcomeBtn = this.outcome.querySelector('.outcome-btn') as HTMLButtonElement;
 
   constructor(private deps: SheetDeps) {
     this.detail.querySelector('.close')!.addEventListener('click', () => this.dlg.close());
     this.detail.querySelector('.edit')!.addEventListener('click', () => this.current && this.showForm(this.current));
     this.delBtn.addEventListener('click', () => this.remove());
+    this.outcomeBtn.addEventListener('click', () => this.outcomeAction());
+    this.detail.querySelector('.checks')!.addEventListener('change', e => {
+      const box = e.target as HTMLInputElement;
+      this.togglePrep(Number(box.dataset.i), box.checked);
+    });
     this.form.querySelector('.cancel')!.addEventListener('click', () => {
       // 改到一半取消：回到详情；新建时取消就关掉
       if (this.current) this.showDetail(this.current); else this.dlg.close();
@@ -59,9 +68,10 @@ export class Sheet {
     if (!this.dlg.open) this.dlg.showModal();
   }
 
-  private showDetail(ev: CalEvent) {
+  private showDetail(ev: CalEvent, keepOutcomeEdit = false) {
     this.current = ev;
     this.confirming = false;
+    if (!keepOutcomeEdit) this.editingOutcome = false;
     this.delBtn.textContent = '删除';
     this.delBtn.classList.remove('danger');
     this.form.hidden = true;
@@ -73,11 +83,81 @@ export class Sheet {
     const notes = this.dlg.querySelector('.detail .notes') as HTMLElement;
     notes.textContent = ev.notes ?? '';
     notes.hidden = !ev.notes;
+    this.renderPrep(ev);
+    this.renderOutcome(ev);
+  }
+
+  /** 准备事项：一张可以勾的清单 */
+  private renderPrep(ev: CalEvent) {
+    const wrap = this.detail.querySelector('.prep') as HTMLElement;
+    const list = wrap.querySelector('.checks') as HTMLElement;
+    const items = ev.prep ?? [];
+    wrap.hidden = !items.length;
+    const h = wrap.querySelector('h3') as HTMLElement;
+    const left = prepLeft(ev);
+    h.textContent = !items.length ? '准备事项' : left ? `准备事项（还有 ${left} 项）` : '准备事项（都好了）';
+    list.replaceChildren(...items.map((p, i) => {
+      const li = document.createElement('li');
+      const label = document.createElement('label');
+      const box = document.createElement('input');
+      box.type = 'checkbox'; box.checked = p.done; box.dataset.i = String(i);
+      const span = document.createElement('span');
+      span.textContent = p.text;
+      label.append(box, span);
+      li.append(label);
+      return li;
+    }));
+  }
+
+  private async togglePrep(i: number, done: boolean) {
+    const ev = this.current;
+    if (!ev?.prep?.[i]) return;
+    const next: CalEvent = { ...ev, prep: ev.prep.map((p, k) => (k === i ? { ...p, done } : p)) };
+    await this.deps.store.put(next);
+    this.current = next;
+    await this.deps.changed();
+    this.renderPrep(next);
+    (this.detail.querySelector(`.checks input[data-i="${i}"]`) as HTMLElement | null)?.focus();
+  }
+
+  /** 结论：结束后才出现。写过的先显示文字，点“修改”再改 */
+  private renderOutcome(ev: CalEvent) {
+    const ended = stateOf(ev, Date.now()) === 'ended';
+    this.outcome.hidden = !ended && !ev.outcome;
+    const editing = this.editingOutcome || !ev.outcome;
+    const text = this.outcome.querySelector('.outcome-text') as HTMLElement;
+    text.textContent = ev.outcome ?? '';
+    text.hidden = editing;
+    this.outcomeInput.hidden = !editing;
+    if (editing) this.outcomeInput.value = ev.outcome ?? '';
+    this.outcomeBtn.textContent = editing ? '记下' : '修改';
+    this.outcomeBtn.classList.toggle('primary', editing);
+  }
+
+  private async outcomeAction() {
+    const ev = this.current;
+    if (!ev) return;
+    if (ev.outcome && !this.editingOutcome) {
+      this.editingOutcome = true;
+      this.renderOutcome(ev);
+      this.outcomeInput.focus();
+      return;
+    }
+    const text = this.outcomeInput.value.trim();
+    if (!text && !ev.outcome) { this.outcomeInput.focus(); return; }
+    const next: CalEvent = { ...ev };
+    if (text) next.outcome = text; else delete next.outcome;
+    await this.deps.store.put(next);
+    await this.deps.changed();
+    this.editingOutcome = false;
+    this.showDetail(next);
+    this.outcomeBtn.focus();
   }
 
   private showForm(ev: CalEvent) {
-    const f = this.form.elements as unknown as Record<'title' | 'date' | 'start' | 'end' | 'notes', HTMLInputElement>;
+    const f = this.form.elements as unknown as Record<'title' | 'date' | 'start' | 'end' | 'notes' | 'prep', HTMLInputElement>;
     f.title.value = ev.title;
+    f.prep.value = (ev.prep ?? []).map(p => p.text).join('\n');
     f.date.value = dateValue(ev.start);
     f.start.value = timeValue(ev.start);
     f.end.value = timeValue(ev.end);
@@ -91,7 +171,7 @@ export class Sheet {
   }
 
   private async save() {
-    const f = this.form.elements as unknown as Record<'title' | 'date' | 'start' | 'end' | 'notes', HTMLInputElement>;
+    const f = this.form.elements as unknown as Record<'title' | 'date' | 'start' | 'end' | 'notes' | 'prep', HTMLInputElement>;
     const title = f.title.value.trim();
     const start = parseLocal(f.date.value, f.start.value);
     const end = parseLocal(f.date.value, f.end.value);
@@ -107,6 +187,9 @@ export class Sheet {
     const notes = f.notes.value.trim();
     const ev: CalEvent = { id: this.current?.id || newId(), title, start: start!, end: end! };
     if (notes) ev.notes = notes;
+    const prep = parsePrep(f.prep.value, this.current?.prep);
+    if (prep.length) ev.prep = prep;
+    if (this.current?.outcome) ev.outcome = this.current.outcome;
     try {
       await this.deps.store.put(ev);
     } catch {
@@ -165,6 +248,12 @@ function stateText(ev: CalEvent, now: number): string {
       return `${days} 天后`;
     }
   }
+}
+
+/** 每行一条；文字没变的保留原来的勾选 */
+function parsePrep(text: string, old: PrepItem[] = []): PrepItem[] {
+  return text.split('\n').map(t => t.trim()).filter(Boolean)
+    .map(t => ({ text: t, done: old.find(p => p.text === t)?.done ?? false }));
 }
 
 /* ---------- 表单里的日期和时间（本地时间） ---------- */

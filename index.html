@@ -22,6 +22,16 @@
     <h2 class="title"></h2>
     <p class="when"></p>
     <p class="notes"></p>
+    <div class="prep" hidden>
+      <h3>准备事项</h3>
+      <ul class="checks"></ul>
+    </div>
+    <div class="outcome" hidden>
+      <h3>结论</h3>
+      <p class="outcome-text"></p>
+      <textarea class="outcome-input" rows="2" maxlength="500" placeholder="这次怎么样？写一两句。" aria-label="结论"></textarea>
+      <div class="outcome-actions"><button type="button" class="outcome-btn">记下</button></div>
+    </div>
     <div class="actions">
       <button type="button" class="del">删除</button>
       <span class="grow"></span>
@@ -38,6 +48,7 @@
       <label>结束<input name="end" type="time"></label>
     </div>
     <label>备注<textarea name="notes" rows="3" maxlength="2000"></textarea></label>
+    <label>准备事项（每行一条）<textarea name="prep" rows="3" maxlength="2000" placeholder="例如：带上上周的数据"></textarea></label>
     <p class="error" role="alert"></p>
     <div class="actions">
       <span class="grow"></span>

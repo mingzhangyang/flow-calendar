@@ -1,6 +1,7 @@
 import type { World } from '../world';
 import type { EventView, Frame } from '../../model/types';
 import { addDays, fmtDay, fmtRange, fmtTime, localHours, startOfDay } from '../../model/time';
+import { prepLeft } from '../../model/states';
 import {
   type OrbGeom, type RGB, PALETTE, SANS, clamp, drawLabel, drawOrb, ellipsePath, hashStr,
   mixc, mod, rgba, rng, smooth, strokeLine,
@@ -487,13 +488,20 @@ export class HikeWorld implements World {
     for (const [ev, o] of visible) {
       let a = smooth(0.32, 0.85, o.z) * (o.z > 30 ? 0.75 : 1);
       const live = ev.state === 'live';
-      if (ev.state === 'ended') a *= 0.45;
+      // 结束了的淡下去；写了结论的成了一条记录，留得深一些
+      if (ev.state === 'ended') a *= ev.outcome ? 0.75 : 0.45;
       // 颜料在夜里比山水少压暗一些，日程始终是画里最醒目的几笔
       const raw = colorOf(ev.title), mist = 0.45 * smooth(4, 60, o.z);
       const fill = mixc(pigment(raw, look, mist), mixc(raw, look.tint, mist), 0.5 * dark);
       const paint = { fill, pale: SHELL_WHITE, line, lineA, shadow, seed: hashStr(ev.id) };
 
       const cy = drawOrb(ctx, o, paint, a);
+      if (ev.state === 'ended' && ev.outcome && o.r > 3) {
+        // 记录：右上角钤一方小小的朱印
+        const q = Math.max(3, o.r * 0.5);
+        ctx.fillStyle = rgba(mixc(pigment(VERMILION, look), [255, 200, 170], 0.3 * dark), 0.9 * a);
+        ctx.fillRect(o.x + o.r * 0.55, cy - o.r * 0.95, q, q);
+      }
       if (live && a > 0.05 && o.r > 2.2) {
         // 进行中：外面再勾一圈朱砂，地上一圈淡淡的朱砂
         const red = mixc(pigment(VERMILION, look), [255, 200, 170], 0.45 * dark);
@@ -507,7 +515,7 @@ export class HikeWorld implements World {
 
       if (o.z < 2.7 && o.z > 0.72) {
         const la = a * smooth(2.7, 2.1, o.z) * smooth(0.72, 0.95, o.z);
-        drawLabel(ctx, o.x, cy - o.r - 6, ev.title, fmtRange(ev.start, ev.end), la, look);
+        drawLabel(ctx, o.x, cy - o.r - 6, ev.title, subLabel(ev), la, look);
       }
       if (a > 0.15 && o.z < 60) this.hits.push({ id: ev.id, x: o.x, y: cy, r: Math.max(o.r * 1.4, 18) });
     }
@@ -535,6 +543,18 @@ export class HikeWorld implements World {
     ctx.fillText(`${fmtDay(now)} ${fmtTime(now)}`, L + w0 + 8, y - 8);
     ctx.restore();
   }
+}
+
+/** 标签第二行：临近和进行中提醒还要准备几项；记录显示结论的开头 */
+function subLabel(ev: EventView): string {
+  const range = fmtRange(ev.start, ev.end);
+  if (ev.state === 'ended' && ev.outcome) {
+    const line = ev.outcome.split('\n')[0];
+    return line.length > 16 ? line.slice(0, 15) + '…' : line;
+  }
+  const n = prepLeft(ev);
+  if ((ev.state === 'soon' || ev.state === 'live') && n) return `${range} · 还要准备 ${n} 项`;
+  return range;
 }
 
 /* 每个日程在路面上的横向位置和颜色，由 id、标题决定，保持稳定 */
