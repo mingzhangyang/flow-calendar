@@ -137,6 +137,9 @@ export class ClimbWorld implements World {
       // 山脊的小起伏，只是笔意，不改坡度的意思
       const wig = k * H * 0.004 * (Math.sin(hs[i] * 1.3) + 0.6 * Math.sin(hs[i] * 3.7 + 1));
       ys[i] = CY + ys[i] + tilt + wig;
+      // 再高也不顶到画面上方的按钮：快到顶时平滑地压住
+      const top = this.insetTop + H * 0.13, m = H * 0.06;
+      if (ys[i] < top + m) ys[i] = top + m * Math.exp((ys[i] - top - m) / m);
     }
     this.rh = hs; this.rx = xs; this.ry = ys;
   }
@@ -154,6 +157,26 @@ export class ClimbWorld implements World {
     }
     const u = (h - rh[lo]) / (rh[hi] - rh[lo]);
     return [rx[lo] + (rx[hi] - rx[lo]) * u, ry[lo] + (ry[hi] - ry[lo]) * u];
+  }
+
+  /** 屏幕横坐标 x 处山脊的高度（x 随时刻递增，在表上反查） */
+  private groundY(x: number): number {
+    const { rx, ry } = this;
+    const n = rx.length;
+    if (x <= rx[0]) return ry[0];
+    if (x >= rx[n - 1]) return ry[n - 1];
+    let lo = 0, hi = n - 1;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (rx[mid] <= x) lo = mid; else hi = mid;
+    }
+    const u = (x - rx[lo]) / Math.max(1e-6, rx[hi] - rx[lo]);
+    return ry[lo] + (ry[hi] - ry[lo]) * u;
+  }
+
+  /** 宽 w 的东西立在 x 处：落在脚下最低的那一点，坡上不悬空（高的一边埋进山坡里） */
+  private footY(x: number, w: number): number {
+    return Math.max(this.groundY(x - w / 2), this.groundY(x), this.groundY(x + w / 2));
   }
 
   /** 时刻 h 附近的缩放：1 是眼前，越远越小 */
@@ -556,8 +579,10 @@ export class ClimbWorld implements World {
       ctx.beginPath(); ctx.moveTo(x, y - fh); ctx.lineTo(x + fh * 0.3, y - fh * 0.9); ctx.lineTo(x, y - fh * 0.8); ctx.fill();
     }
     const days = Math.max(0, Math.ceil((startOfDay(summit.ms) - startOfDay(now)) / 86_400_000));
-    const right = x > W - 70;
-    drawLabel(ctx, right ? x - 8 : x, y - fh - 4, summit.label, days ? `还有 ${days} 天` : '就是今天', 0.95, look, right ? 'right' : 'center');
+    // 靠右边时字写在旗的左边，也不压住右上角的按钮
+    const right = x > W - 90;
+    const ly = Math.max(this.insetTop + 86, y - fh - 4);
+    drawLabel(ctx, right ? x - 10 : x, right ? Math.max(ly, y - fh * 0.4) : ly, summit.label, days ? `还有 ${days} 天` : '就是今天', 0.95, look, right ? 'right' : 'center');
   }
 
   /* ---------- 营地 ---------- */
@@ -566,7 +591,7 @@ export class ClimbWorld implements World {
   private drawCamps(ctx: CanvasRenderingContext2D, events: EventView[], look: Look, reserved: Box[]) {
     const { W, H, CX, T } = this;
     this.hits = [];
-    const campH = clamp(H * 0.075, 46, 76);
+    const campH = clamp(H * 0.05, 34, 52);
     const dark = 1 - look.daylight;
     const line = mixc(pigment(INK, look), mixc(SHELL_WHITE, look.tint, 0.3), dark);
     const shadow = pigment(mixc(OCHRE, INK, 0.6), look);
@@ -583,6 +608,19 @@ export class ClimbWorld implements World {
       if (x < -40 || x > W + 40) continue;
       items.push({ ev, h, x, y, k: this.scaleAt(h) });
     }
+    // 只有几处搭山亭：进行中的，和视角前面最近的两三个，彼此隔开一点；其余的只在路边挂一盏灯
+    const pavilions = new Set<EventView>();
+    const near = items
+      .filter(it => it.ev.state !== 'ended' && it.h >= T - 2 && campH * it.k >= 18)
+      .sort((a, b) => (b.ev.state === 'live' ? 1 : 0) - (a.ev.state === 'live' ? 1 : 0) || a.h - b.h);
+    const placed: number[] = [];
+    for (const it of near) {
+      if (pavilions.size >= 3) break;
+      const w = campH * it.k * this.art.camp.aspect;
+      if (placed.some(px => Math.abs(px - it.x) < w * 1.3)) continue;
+      pavilions.add(it.ev);
+      placed.push(it.x);
+    }
     // 远的先画，离“现在”近的压在上面
     items.sort((a, b) => Math.abs(b.x - CX) - Math.abs(a.x - CX));
 
@@ -597,9 +635,11 @@ export class ClimbWorld implements World {
 
       if (ended) {
         // 走过的营地收起来，留下一座石堆；写了结论的留得深一些，钤一方小朱印
-        const ch = Math.max(4, size * 0.55);
+        const ch = Math.max(4, size * 0.6);
         const a = ev.outcome ? 0.95 : 0.6;
-        if (this.art.cairn.ready && ch > 6) this.art.cairn.drawSmall(ctx, x, y + 2, ch, look, a, hashStr(ev.id) % 2 === 0);
+        if (this.art.cairn.ready && ch > 6) {
+          this.art.cairn.drawSmall(ctx, x, this.footY(x, ch * this.art.cairn.aspect * 0.7) + 1, ch, look, a, hashStr(ev.id) % 2 === 0);
+        }
         else drawOrb(ctx, { x, wy: y, z: 1, r: Math.max(1.3, ch * 0.3) }, paint, a);
         if (ev.outcome && ch > 6) {
           const q = Math.max(3, ch * 0.22);
@@ -611,26 +651,37 @@ export class ClimbWorld implements World {
         continue;
       }
 
-      if (size < 14 || !this.art.camp.ready) {
-        // 太远了，只剩一点颜色；越远越藏进云里
-        const r = clamp(size * 0.14, 1.3, 6);
-        const cy = drawOrb(ctx, { x, wy: y, z: 1, r }, paint, 0.95 * (1 - 0.7 * smooth(36, 240, it.h - T)));
+      if (!pavilions.has(ev) || !this.art.camp.ready) {
+        // 路边一根细竹竿挑一盏灯，灯是日程的颜色；太远了只剩一点颜色，越远越藏进云里
+        const a = 0.95 * (1 - 0.7 * smooth(36, 240, it.h - T));
+        const pole = size * 0.5;
+        const r = clamp(size * 0.11, 1.3, 4.5);
+        if (pole > 6) {
+          ctx.strokeStyle = rgba(line, 0.6 * a);
+          ctx.lineWidth = 0.9;
+          ctx.beginPath(); ctx.moveTo(x, y + 1); ctx.lineTo(x, y - pole); ctx.stroke();
+        }
+        const top = pole > 6 ? y - pole + r * 1.2 : y;
+        const cy = drawOrb(ctx, { x, wy: top, z: 1, r }, paint, a);
         this.hits.push({ id: ev.id, x, y, w: 26, h: Math.max(26, y - cy + r + 8) });
+        if (k > 0.5) labels.push([it, cy - r - 4]);
         continue;
       }
-      this.art.camp.drawSmall(ctx, x, y + 3, size, look, 1, false);
+      const pw = size * this.art.camp.aspect;
+      const py = this.footY(x, pw * 0.8) + 2;
+      this.art.camp.drawSmall(ctx, x, py, size, look, 1, false);
       // 檐下挂一盏灯：日程的颜色
       const lr = Math.max(2, size * 0.075);
-      const ly = drawOrb(ctx, { x, wy: y - size * 0.42, z: 1, r: lr }, paint, 1);
+      const ly = drawOrb(ctx, { x, wy: py - size * 0.42, z: 1, r: lr }, paint, 1);
       if (ev.state === 'live') {
         // 进行中：灯外再勾一圈朱砂
         ctx.strokeStyle = rgba(red, 0.85);
         ctx.lineWidth = clamp(lr * 0.25, 1, 2);
         ctx.beginPath(); ctx.arc(x, ly, lr * 1.6, 0, Math.PI * 2); ctx.stroke();
       }
-      this.hits.push({ id: ev.id, x, y, w: Math.max(size * 0.95, 30), h: Math.max(size, 30) });
+      this.hits.push({ id: ev.id, x, y: py, w: Math.max(pw * 0.9, 30), h: Math.max(size, 30) });
       // 进行中的那个写在爬山的人头顶，这里不再重复
-      if (k > 0.35 && ev.state !== 'live') labels.push([it, y - size - 2]);
+      if (k > 0.35 && ev.state !== 'live') labels.push([it, py - size - 2]);
     }
 
     // 标签：离“现在”近的优先，彼此不重叠，也不压住爬山的人
@@ -661,20 +712,23 @@ export class ClimbWorld implements World {
     const [x, y] = this.at(nowH);
     if (x < -40 || x > W + 40 || y > H - this.insetBottom) return [];
     const k = this.scaleAt(nowH);
-    const ch = clamp(H * 0.062, 38, 58) * Math.max(0.5, k);
+    const ch = clamp(H * 0.058, 36, 54) * Math.max(0.5, k);
     const live = f.events.find(e => e.state === 'live' && !isAllDay(e.start, e.end));
     const hod = mod(nowH, 24);
     const busy = this.terrain.busyAt(nowH);
 
     // 开会时，同行的人跟在身后一起走
     if (live && this.art.companion.ready) {
-      const [bx, by] = this.at(nowH - (ch * 0.75) / this.sx);
-      this.art.companion.drawSmall(ctx, bx, by + 2, ch * 0.95, look, 1, false);
+      const [bx] = this.at(nowH - (ch * 0.75) / this.sx);
+      const c = this.art.companion;
+      c.drawSmall(ctx, bx, this.footY(bx, ch * 0.95 * c.aspect * 0.6) + 2, ch * 0.95, look, 1, false);
     }
     const night = (hod >= 22 || hod < 6) && !live;
     const s = night ? this.art.rest : busy > 0.5 || live ? this.art.steep : this.art.walk;
     if (s.ready) {
-      s.drawSmall(ctx, x, y + 2, s === this.art.walk ? ch : ch * 0.85, look, 1, false);
+      const sh = s === this.art.walk ? ch : ch * 0.85;
+      // 两脚叉开，落在脚下最低的地方，坡上不悬空
+      s.drawSmall(ctx, x, this.footY(x, sh * s.aspect * 0.6) + 2, sh, look, 1, false);
     } else {
       ctx.fillStyle = rgba(pigment(AZURITE, look), 1);
       ellipsePath(ctx, x, y - ch * 0.4, ch * 0.15, ch * 0.4);
