@@ -14,6 +14,7 @@ import grass3 from './grass-3.webp';
 import buffalo1 from './buffalo-1.webp';
 import buffalo2 from './buffalo-2.webp';
 import sheep1 from './sheep-1.webp';
+import hut1 from './hut-1.webp';
 
 /**
  * w、h：图片像素；peak：最高处到山脚（图片底边）的距离，占图片高度的比例（云和精灵图为 0）；
@@ -37,4 +38,5 @@ export const ART = {
   buffalo1: { url: buffalo1, w: 256, h: 144, peak: 0.000, ax: 0.423 },
   buffalo2: { url: buffalo2, w: 256, h: 156, peak: 0.000, ax: 0.570 },
   sheep1: { url: sheep1, w: 192, h: 122, peak: 0.000, ax: 0.523 },
+  hut1: { url: hut1, w: 256, h: 142, peak: 0.000, ax: 0.598 },
 } satisfies Record<string, ArtInfo>;

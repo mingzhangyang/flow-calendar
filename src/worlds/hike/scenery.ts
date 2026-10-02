@@ -50,6 +50,7 @@ export class Scenery {
   private grassArt: Sprite[];
   private buffaloArt: Sprite[];
   private sheepArt: Sprite;
+  private hutArt: Sprite;
   /** 三层远山的轮廓高度（像素），每 3 像素一个采样，从远到近 */
   private ridges: Float32Array[] = [];
   /** 路尽头的雪山：轮廓高度和峰高 */
@@ -65,6 +66,7 @@ export class Scenery {
     this.grassArt = [ART.grass1, ART.grass2, ART.grass3].map(a => new Sprite(a, invalidate));
     this.buffaloArt = [ART.buffalo1, ART.buffalo2].map(a => new Sprite(a, invalidate));
     this.sheepArt = new Sprite(ART.sheep1, invalidate);
+    this.hutArt = new Sprite(ART.hut1, invalidate);
   }
 
   resize(W: number, H: number, HZ: number) {
@@ -358,6 +360,27 @@ export class Scenery {
           }
         }
 
+        // 远处田野里偶尔一两间茅屋，有的旁边一棵柳。离路远，走近之前就出了画面；
+        // 画好的素材没加载好就不画（用自己的随机数，不影响别的景物）
+        if (this.hutArt.ready && art) {
+          const rh = rng(k * 2 + (side > 0 ? 1 : 0) + 11_000_000);
+          if (rh() < 0.012) {
+            const d = 1.1 + rh() * 1.1, hh = k * SLOT + rh() * SLOT, hseed = Math.floor(rh() * 1e9);
+            const n = rh() < 0.7 ? 1 : 2, willow = rh() < 0.5;
+            for (let i = 0; i < n; i++) {
+              const [x, y, z] = at(d + i * (0.5 + rh() * 0.2), hh + i * (0.3 + rh() * 0.4));
+              const s = this.scale(z);
+              const a = (z: number) => fade(z) * smooth(2.2, 3.4, z);
+              if (s && z < FAR_Z && s * 0.26 > 3) items.push([z, () => this.hutSprite(ctx, x, y, s, look, a(z), rng(hseed + i))]);
+            }
+            if (willow) {
+              const [x, y, z] = at(d - 0.3 - rh() * 0.1, hh + 0.2);
+              const s = this.scale(z);
+              if (s && z < FAR_Z && s * 0.2 > 2) items.push([z, () => this.treeArt[2].drawSmall(ctx, x, y, (0.5 + rh() * 0.15) * s, look, fade(z) * smooth(2.2, 3.4, z), rh() < 0.5)]);
+            }
+          }
+        }
+
         const kind = r();
         const seed = Math.floor(r() * 1e9);
         if (kind < 0.32) {
@@ -451,6 +474,11 @@ export class Scenery {
   private sheepSprite(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, look: Look, a: number, r: () => number) {
     const w = (0.052 + r() * 0.012) * s;
     this.sheepArt.drawSmall(ctx, x, y, w / this.sheepArt.aspect, look, a, r() < 0.5);
+  }
+
+  /** 茅屋：比树矮，朝向随机 */
+  private hutSprite(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, look: Look, a: number, r: () => number) {
+    this.hutArt.drawSmall(ctx, x, y, (0.24 + r() * 0.05) * s, look, a, r() < 0.5);
   }
 
   /** 深度 z 处，一个世界单位有多少像素；太近（在“现在”线后面很远）就不画 */
