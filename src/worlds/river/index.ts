@@ -69,9 +69,17 @@ export class RiverWorld implements World {
     this.drawBank(ctx, 1, sky, look);
     this.drawHaze(ctx, sky);
     this.drawStreaks(ctx, look);
-    this.drawHorizonMarks(ctx, f.view, look);
+    this.drawHorizonMarks(ctx, f.now, look);
     this.drawEvents(ctx, f.events, night, look);
     this.drawNowLine(ctx, f.now, look);
+  }
+
+  dragHours(y: number, dy: number): number {
+    // 屏幕 y 处的时刻 h = T + (D / (y - HZ) - 1) * TAU。
+    // 让手指下的 h 不变，T 就要变 TAU * D / (y - HZ)² * dy。
+    // 越靠近地平线一步走得越远；离地平线太近时封顶，免得手一抖就跳出好几天。
+    const fromHz = Math.max(y - this.HZ, this.D * 0.35);
+    return (TAU * this.D * dy) / (fromHz * fromHz);
   }
 
   hitTest(x: number, y: number): string | null {
@@ -202,9 +210,9 @@ export class RiverWorld implements World {
     }
   }
 
-  /** 地平线附近的路标：明天、下周一、下个月 */
-  private drawHorizonMarks(ctx: CanvasRenderingContext2D, view: number, look: Look) {
-    const today = startOfDay(view);
+  /** 地平线附近的路标：明天、下周一、下个月（都相对真实的今天） */
+  private drawHorizonMarks(ctx: CanvasRenderingContext2D, now: number, look: Look) {
+    const today = startOfDay(now);
     const tomorrow = addDays(today, 1);
     const d = new Date(today);
     const toMonday = ((8 - d.getDay()) % 7) || 7;
