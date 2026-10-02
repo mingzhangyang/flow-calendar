@@ -15,7 +15,7 @@ const viewport = new Viewport();
 const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
 viewport.reducedMotion = motionQuery.matches;
 motionQuery.addEventListener('change', () => { viewport.reducedMotion = motionQuery.matches; });
-const world: World = new RiverWorld();
+const world: World = new RiverWorld(() => requestRender());
 
 // 第 3 步换成本地数据库
 let events: CalEvent[] = demoEvents(Date.now());
@@ -47,7 +47,7 @@ function resize() {
  * 只有三种情况会画：
  *   1. 视角在动、或世界有过渡动画 → 逐帧画
  *   2. 时间往前走了一点 → 按世界给的间隔画一次（河流约每 20 秒）
- *   3. 尺寸变化、页面重新可见、某个日程改变状态 → 立刻画一次
+ *   3. 尺寸变化、页面重新可见、某个日程改变状态、素材加载好 → 立刻画一次
  * 页面在后台时完全不画。
  */
 let rafId = 0;

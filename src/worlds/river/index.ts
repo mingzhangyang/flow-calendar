@@ -37,7 +37,12 @@ export class RiverWorld implements World {
   private insetBottom = 0;
   private T = 0;
   private hits: Hit[] = [];
-  private scenery = new Scenery();
+  private scenery: Scenery;
+
+  /** invalidate：世界里有东西变了（比如素材加载好了），需要重画一次 */
+  constructor(invalidate: () => void) {
+    this.scenery = new Scenery(invalidate);
+  }
 
   resize(w: number, h: number, insets: { top: number; bottom: number }) {
     this.W = w; this.H = h;

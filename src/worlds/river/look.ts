@@ -19,7 +19,7 @@ export const VERMILION: RGB = [196, 64, 40];  // 朱砂
 export const SHELL_WHITE: RGB = [246, 241, 228]; // 蛤粉
 
 /** 夜里各通道保留的亮度：整体压暗、略偏青，颜料的色相不变 */
-const NIGHT_KEEP: RGB = [0.36, 0.4, 0.5];
+export const NIGHT_KEEP: RGB = [0.36, 0.4, 0.5];
 
 export interface Look {
   daylight: number;

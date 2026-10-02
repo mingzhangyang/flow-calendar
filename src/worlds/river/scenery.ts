@@ -1,6 +1,8 @@
 import { type RGB, ellipsePath, mixc, mod, rgba, rng, smooth } from './paint';
 import type { Sky } from './sky';
 import { type Look, AZURITE, INK, MALACHITE, OCHRE, SHELL_WHITE, SILK, pigment } from './look';
+import { Sprite } from './sprites';
+import { ART } from './art';
 
 /**
  * 河两岸的水墨景物：远山、白云、树、草、小溪、牛羊。
@@ -22,9 +24,24 @@ function inkOf(look: Look): RGB {
   return mixc(mixc(look.land, [196, 186, 166], 0.3), INK, look.daylight);
 }
 
+/**
+ * 画好的远山：从远到近三层，每层的山峰高度（占屏高）和被雾吞掉的程度。
+ * 素材的山脚对准地平线，往下一点藏进地平线的雾里。
+ */
+const RANGES = [
+  { art: ART.rangeFar, peak: 0.12, mist: 0.22 },
+  { art: ART.rangeMid, peak: 0.095, mist: 0.1 },
+  { art: ART.rangeNear, peak: 0.07, mist: 0.02 },
+];
+/** 雪山：峰高占屏高的比例 */
+const PEAK_H = 0.145;
+
 export class Scenery {
-  private W = 0; private HZ = 0;
+  private W = 0; private H = 0; private HZ = 0;
   private S = 0;
+  /** 画好的远山和雪山；没加载好之前用代码画的兜底 */
+  private ranges: Sprite[];
+  private snow: Sprite;
   /** 三层远山的轮廓高度（像素），每 3 像素一个采样，从远到近 */
   private ridges: Float32Array[] = [];
   /** 河流尽头的雪山：轮廓高度和峰高 */
@@ -32,8 +49,13 @@ export class Scenery {
   private peakH = 0;
   private clouds: { u: number; v: number; w: number; speed: number; puffs: [number, number, number][] }[] = [];
 
+  constructor(invalidate: () => void) {
+    this.ranges = RANGES.map(r => new Sprite(r.art, invalidate));
+    this.snow = new Sprite(ART.peak1, invalidate);
+  }
+
   resize(W: number, H: number, HZ: number) {
-    this.W = W; this.HZ = HZ;
+    this.W = W; this.H = H; this.HZ = HZ;
     this.S = Math.min(W * 0.55, H * 0.6);
     this.ridges = [0, 1, 2].map(i => makeRidge(W, H, i));
     this.peakH = H * 0.145;
@@ -53,11 +75,29 @@ export class Scenery {
 
   drawFar(ctx: CanvasRenderingContext2D, sky: Sky, look: Look, T: number) {
     this.drawClouds(ctx, sky, look, T);
-    this.drawMountains(ctx, sky, look);
+    if (this.snow.ready && this.ranges.every(r => r.ready)) this.drawArtMountains(ctx, look);
+    else this.drawMountains(ctx, sky, look);
+  }
+
+  /** 画好的雪山和三层远山，钉在屏幕上不动 */
+  private drawArtMountains(ctx: CanvasRenderingContext2D, look: Look) {
+    const { W, H, HZ } = this;
+    const foot = HZ + H * 0.006;
+    {
+      const s = this.snow, h = (H * PEAK_H) / s.info.peak, w = h * s.aspect;
+      s.draw(ctx, W / 2 - w / 2, foot - h, w, h, look, 0.12, 0.6);
+    }
+    RANGES.forEach((r, i) => {
+      const s = this.ranges[i];
+      // 至少铺满屏幕宽度；窄屏上按高度来，只露出中间河流远去的山口和两边的山
+      const h = Math.max((H * r.peak) / s.info.peak, W / s.aspect);
+      const w = h * s.aspect;
+      s.draw(ctx, W / 2 - w / 2, foot - h, w, h, look, r.mist, 0.75);
+    });
   }
 
   /**
-   * 青绿山峦：山脚赭石，往上石绿，山脊石青，墨线勾勒。
+   * （兜底）青绿山峦：山脚赭石，往上石绿，山脊石青，墨线勾勒。
    * 颜色沿着山脊走：把山脊线在山体里描几道宽窄不同的色带，
    * 这样每座峰的峰顶都是青的，而不是整层只有最高处才青。
    */
@@ -113,7 +153,7 @@ export class Scenery {
     });
   }
 
-  /** 路的尽头，最远处的一座雪山：青绿的山体，峰顶一层蛤粉白雪 */
+  /** （兜底）路的尽头，最远处的一座雪山：青绿的山体，峰顶一层蛤粉白雪 */
   private drawSnowPeak(ctx: CanvasRenderingContext2D, look: Look) {
     const { W, HZ, peak, peakH } = this;
     const cx = W / 2, top = HZ - peakH, m = 0.6;
