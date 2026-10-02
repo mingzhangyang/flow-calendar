@@ -9,12 +9,13 @@ import type { ArtInfo } from './art';
  *   夜里：叠一层预先压暗的“夜里版”，按夜的程度混合；
  *   天色：在图片自己的像素上（source-atop）薄薄罩一层天色，远处和山脚罩得更多，淡进雾里。
  * 图片只解码一次；着色结果按“尺寸 + 光”缓存，光没变就直接贴上去。
+ * 同一张图可以画成几种大小（比如几朵云），每种大小各留一份。
  */
 export class Sprite {
   private day: HTMLImageElement | null = null;
   private night: HTMLCanvasElement | null = null;
-  private cache: HTMLCanvasElement | null = null;
-  private key = '';
+  /** 尺寸 → 这个尺寸上次着色时的光、着色结果 */
+  private cache = new Map<string, { light: string; canvas: HTMLCanvasElement }>();
 
   constructor(readonly info: ArtInfo, onReady: () => void) {
     const img = new Image();
@@ -34,20 +35,30 @@ export class Sprite {
   /**
    * 画在 (x, y, w, h)（CSS 像素）。
    * mist：整体被雾吞掉多少；foot：底边被雾吞掉多少（从上到下渐变）。
+   * alpha：整体透明度；flip：左右翻转。
    */
-  draw(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, look: Look, mist: number, foot: number) {
+  draw(
+    ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number,
+    look: Look, mist: number, foot: number, opt: { alpha?: number; flip?: boolean } = {},
+  ) {
     if (!this.day || !this.night) return;
     const dpr = ctx.getTransform().a || 1;
     const dw = Math.max(1, Math.round(w * dpr)), dh = Math.max(1, Math.round(h * dpr));
     const k = (1 - look.daylight) * (1 - mist);
     const t = look.tint;
+    const size = `${dw}x${dh}`;
     // 光的量化：变化小到看不出来时不重新着色
-    const key = `${dw}x${dh}|${Math.round(k * 48)}|${t.map(v => Math.round(v / 3)).join(',')}|${mist}|${foot}`;
-    if (key !== this.key || !this.cache) {
-      this.key = key;
-      const c = (this.cache ??= document.createElement('canvas'));
-      if (c.width !== dw || c.height !== dh) { c.width = dw; c.height = dh; }
-      const g = c.getContext('2d')!;
+    const light = `${Math.round(k * 48)}|${t.map(v => Math.round(v / 3)).join(',')}|${mist}|${foot}`;
+    let entry = this.cache.get(size);
+    if (!entry || entry.light !== light) {
+      if (!entry) {
+        if (this.cache.size >= 8) this.cache.delete(this.cache.keys().next().value!);
+        entry = { light, canvas: document.createElement('canvas') };
+        entry.canvas.width = dw; entry.canvas.height = dh;
+        this.cache.set(size, entry);
+      }
+      entry.light = light;
+      const g = entry.canvas.getContext('2d')!;
       g.globalCompositeOperation = 'source-over';
       g.globalAlpha = 1;
       g.clearRect(0, 0, dw, dh);
@@ -68,7 +79,18 @@ export class Sprite {
       g.fillStyle = fog;
       g.fillRect(0, 0, dw, dh);
     }
-    ctx.drawImage(this.cache!, x, y, w, h);
+    const a = opt.alpha ?? 1;
+    if (a < 1) { ctx.save(); ctx.globalAlpha *= a; }
+    if (opt.flip) {
+      ctx.save();
+      ctx.translate(x + w, y);
+      ctx.scale(-1, 1);
+      ctx.drawImage(entry.canvas, 0, 0, w, h);
+      ctx.restore();
+    } else {
+      ctx.drawImage(entry.canvas, x, y, w, h);
+    }
+    if (a < 1) ctx.restore();
   }
 }
 

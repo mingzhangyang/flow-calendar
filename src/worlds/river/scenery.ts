@@ -42,16 +42,18 @@ export class Scenery {
   /** 画好的远山和雪山；没加载好之前用代码画的兜底 */
   private ranges: Sprite[];
   private snow: Sprite;
+  private cloudArt: Sprite[];
   /** 三层远山的轮廓高度（像素），每 3 像素一个采样，从远到近 */
   private ridges: Float32Array[] = [];
   /** 河流尽头的雪山：轮廓高度和峰高 */
   private peak: Float32Array = new Float32Array(0);
   private peakH = 0;
-  private clouds: { u: number; v: number; w: number; speed: number; puffs: [number, number, number][] }[] = [];
+  private clouds: { u: number; v: number; w: number; speed: number; puffs: [number, number, number][]; art: number; flip: boolean }[] = [];
 
   constructor(invalidate: () => void) {
     this.ranges = RANGES.map(r => new Sprite(r.art, invalidate));
     this.snow = new Sprite(ART.peak1, invalidate);
+    this.cloudArt = [ART.cloud1, ART.cloud2].map(a => new Sprite(a, invalidate));
   }
 
   resize(W: number, H: number, HZ: number) {
@@ -67,7 +69,10 @@ export class Scenery {
       const puffs: [number, number, number][] = [];
       const n = 4 + Math.floor(r() * 4);
       for (let k = 0; k < n; k++) puffs.push([(k / (n - 1)) - 0.5 + (r() - 0.5) * 0.12, (r() - 0.5) * 0.5, 0.35 + r() * 0.45]);
-      this.clouds.push({ u: r(), v: 0.08 + r() * 0.5, w: Math.min(W * (0.22 + r() * 0.22), H * 0.3), speed: 0.012 + r() * 0.02, puffs });
+      this.clouds.push({
+        u: r(), v: 0.08 + r() * 0.5, w: Math.min(Math.max(W, H * 0.75) * (0.22 + r() * 0.22), H * 0.3), speed: 0.012 + r() * 0.02, puffs,
+        art: i % 2, flip: r() < 0.5,
+      });
     }
   }
 
@@ -221,9 +226,25 @@ export class Scenery {
     ctx.stroke(line);
   }
 
-  /** 云：留白的绢，比天色亮一点 */
+  /**
+   * 云：画好的两种云，轮流用、有的左右翻转。随视角时间缓缓往一边飘，飘出去再从另一边进来。
+   * 图片没加载好时用代码画的留白兜底。
+   */
   private drawClouds(ctx: CanvasRenderingContext2D, sky: Sky, look: Look, T: number) {
     const { W, HZ } = this;
+    if (this.cloudArt.every(s => s.ready)) {
+      const alpha = 0.4 + 0.6 * look.daylight; // 夜里的云淡一些，免得在暗天上发灰
+      for (const cl of this.clouds) {
+        const s = this.cloudArt[cl.art];
+        // 图片里的云比代码画的那团略宽，按 1.8 倍画
+        const w = cl.w * 1.8, h = w / s.aspect;
+        const span = W + w;
+        const x = mod(cl.u * span + T * cl.speed * W, span) - w;
+        s.draw(ctx, x, cl.v * HZ - h / 2, w, h, look, 0.08, 0, { alpha, flip: cl.flip });
+      }
+      return;
+    }
+
     const col = mixc(pigment(SHELL_WHITE, look, 0.2), sky.bot, 0.15);
     const alpha = 0.4 + 0.35 * look.daylight;
     for (const cl of this.clouds) {
