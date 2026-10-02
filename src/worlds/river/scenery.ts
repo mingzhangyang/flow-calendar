@@ -27,12 +27,17 @@ export class Scenery {
   private S = 0;
   /** 三层远山的轮廓高度（像素），每 3 像素一个采样，从远到近 */
   private ridges: Float32Array[] = [];
+  /** 河流尽头的雪山：轮廓高度和峰高 */
+  private peak: Float32Array = new Float32Array(0);
+  private peakH = 0;
   private clouds: { u: number; v: number; w: number; speed: number; puffs: [number, number, number][] }[] = [];
 
   resize(W: number, H: number, HZ: number) {
     this.W = W; this.HZ = HZ;
     this.S = Math.min(W * 0.55, H * 0.6);
     this.ridges = [0, 1, 2].map(i => makeRidge(W, H, i));
+    this.peakH = H * 0.145;
+    this.peak = makePeak(W, H, this.peakH);
 
     const r = rng(29);
     this.clouds = [];
@@ -54,6 +59,7 @@ export class Scenery {
   private drawMountains(ctx: CanvasRenderingContext2D, sky: Sky, night: number) {
     const { W, HZ } = this;
     const dark = mixc([52, 64, 70], [5, 8, 16], night);
+    this.drawSnowPeak(ctx, sky, night, dark);
     const strength = [0.28, 0.45, 0.62];
     this.ridges.forEach((ridge, i) => {
       const c = mixc(sky.bot, dark, strength[i]);
@@ -83,6 +89,80 @@ export class Scenery {
       ctx.lineWidth = 1;
       ctx.stroke();
     });
+  }
+
+  /** 路的尽头，最远处的一座雪山 */
+  private drawSnowPeak(ctx: CanvasRenderingContext2D, sky: Sky, night: number, dark: RGB) {
+    const { W, HZ, peak, peakH } = this;
+    const cx = W / 2, top = HZ - peakH;
+    const outline = () => {
+      ctx.beginPath();
+      ctx.moveTo(0, HZ + 2);
+      for (let k = 0; k < peak.length; k++) ctx.lineTo(k * 3, HZ - peak[k]);
+      ctx.lineTo(W, HZ + 2);
+      ctx.closePath();
+    };
+
+    // 山体：很远，所以只比天色深一点
+    const body = mixc(sky.bot, dark, 0.32);
+    const g = ctx.createLinearGradient(0, top, 0, HZ);
+    g.addColorStop(0, rgba(body, 1));
+    g.addColorStop(1, rgba(mixc(body, sky.bot, 0.85), 1));
+    outline();
+    ctx.fillStyle = g;
+    ctx.fill();
+
+    ctx.save();
+    outline();
+    ctx.clip();
+
+    // 积雪：白天雪白，早晚被霞光染暖，夜里是月光下的淡灰
+    const snow = mixc(mixc([250, 251, 253], sky.bot, 0.22), mixc(sky.bot, [190, 200, 225], 0.4), night);
+    const line = (x: number) => {
+      // 雪线参差，沟里的雪舌往下伸
+      const n = Math.sin(x * 0.07) * 0.03 + Math.sin(x * 0.19 + 1) * 0.015;
+      const tongue = Math.max(0, Math.sin(x * 0.055 + 0.6)) ** 6 * 0.16;
+      return HZ - peakH * (0.56 - n - tongue);
+    };
+    ctx.beginPath();
+    ctx.moveTo(0, top - 2);
+    ctx.lineTo(W, top - 2);
+    for (let x = W; x >= 0; x -= 3) ctx.lineTo(x, line(x));
+    ctx.closePath();
+    ctx.fillStyle = rgba(snow, 0.96);
+    ctx.fill();
+
+    // 背光的一面：右侧淡淡一层墨
+    const sh = ctx.createLinearGradient(cx - peakH * 0.2, 0, cx + peakH * 1.4, 0);
+    sh.addColorStop(0, rgba(dark, 0));
+    sh.addColorStop(0.25, rgba(dark, 0.16 - 0.08 * night));
+    sh.addColorStop(1, rgba(dark, 0.04));
+    ctx.fillStyle = sh;
+    ctx.fillRect(cx - peakH * 0.2, top - 2, peakH * 3, peakH + 4);
+
+    // 山脊上几笔皴擦，从峰顶往下
+    ctx.strokeStyle = rgba(dark, 0.14);
+    ctx.lineWidth = 1;
+    for (const [dx, len] of [[-0.25, 0.3], [0.18, 0.38], [0.42, 0.26], [-0.55, 0.22]]) {
+      const x0 = cx + dx * peakH * 0.6;
+      const y0 = HZ - peak[Math.round(x0 / 3)] + 2;
+      ctx.beginPath();
+      ctx.moveTo(x0, y0);
+      ctx.quadraticCurveTo(x0 + dx * peakH * 0.3, y0 + peakH * len * 0.5, x0 + dx * peakH * 0.5, y0 + peakH * len);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // 山的轮廓一笔淡墨，免得雪顶和浅色的天空混在一起
+    ctx.beginPath();
+    for (let k = 0; k < peak.length; k++) {
+      if (peak[k] < peakH * 0.15) continue;
+      const x = k * 3, y = HZ - peak[k];
+      if (k && peak[k - 1] >= peakH * 0.15) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+    }
+    ctx.strokeStyle = rgba(mixc(body, dark, 0.6), 0.45);
+    ctx.lineWidth = 1;
+    ctx.stroke();
   }
 
   private drawClouds(ctx: CanvasRenderingContext2D, sky: Sky, night: number, T: number) {
@@ -217,6 +297,27 @@ export class Scenery {
 }
 
 /* ---------- 远山的轮廓 ---------- */
+
+/** 雪山：一座尖峰带两个肩，左右不对称 */
+function makePeak(W: number, H: number, ph: number): Float32Array {
+  const n = Math.ceil(W / 3) + 1;
+  const out = new Float32Array(n);
+  const cx = W / 2;
+  const parts: [number, number, number][] = [
+    [0, 1, H * 0.1],
+    [-H * 0.1, 0.66, H * 0.09],
+    [H * 0.085, 0.72, H * 0.07],
+    [H * 0.2, 0.38, H * 0.1],
+  ];
+  for (let k = 0; k < n; k++) {
+    const x = k * 3;
+    let v = 0;
+    for (const [dx, f, w] of parts) v = Math.max(v, ph * f * Math.exp(-((Math.abs(x - cx - dx) / w) ** 1.25)));
+    v += Math.sin(x * 0.23) * 0.6 + Math.sin(x * 0.09) * 1.2;
+    out[k] = Math.max(0, v);
+  }
+  return out;
+}
 
 function makeRidge(W: number, H: number, layer: number): Float32Array {
   const r = rng(101 + layer * 17);
