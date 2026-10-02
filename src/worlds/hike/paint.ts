@@ -37,39 +37,65 @@ export function ellipsePath(ctx: CanvasRenderingContext2D, x: number, y: number,
   ctx.ellipse(x, y, Math.max(0.1, rx), Math.max(0.1, ry), 0, 0, Math.PI * 2);
 }
 
-/** 光球的颜色：取自青绿山水的矿物颜料 */
+/** 日程点的颜料：朱砂、石青、石绿、泥金（与 look.ts 的颜料一致） */
 export const PALETTE: RGB[] = [
-  [214, 84, 56],   // 朱砂
-  [66, 128, 186],  // 石青
-  [58, 156, 122],  // 石绿
-  [216, 166, 70],  // 泥金
+  [196, 64, 40],   // 朱砂
+  [52, 104, 150],  // 石青
+  [62, 138, 112],  // 石绿
+  [190, 146, 64],  // 泥金
 ];
 
 export interface OrbGeom { x: number; wy: number; z: number; r: number }
 
-/** 画一颗浮在水面上的光球，返回球心的 y */
-export function drawOrb(
-  ctx: CanvasRenderingContext2D, o: OrbGeom, col: RGB, a: number,
-  opt: { night?: number; glow?: number; rim?: number } = {},
-): number {
-  const r = o.r, cy = o.wy - r * 1.15, nt = opt.night ?? 0;
-  if (a < 0.01) return cy;
-  if (r > 3) { ctx.fillStyle = rgba(col, 0.22 * a); ellipsePath(ctx, o.x, o.wy + r * 0.15, r * 1.15, r * 0.3); ctx.fill(); }
-  const gr = r * (2.3 + nt * 1.2);
-  const g = ctx.createRadialGradient(o.x, cy, 0, o.x, cy, gr);
-  g.addColorStop(0, rgba(col, (0.38 + 0.3 * nt) * a * (opt.glow ?? 1)));
-  g.addColorStop(1, rgba(col, 0));
-  ctx.fillStyle = g; ctx.fillRect(o.x - gr, cy - gr, gr * 2, gr * 2);
-  const g2 = ctx.createRadialGradient(o.x - r * 0.3, cy - r * 0.35, r * 0.1, o.x, cy, r);
-  g2.addColorStop(0, rgba(mixc(col, [255, 255, 255], 0.6), a));
-  g2.addColorStop(1, rgba(col, a * 0.9));
-  ctx.fillStyle = g2; ctx.beginPath(); ctx.arc(o.x, cy, r, 0, Math.PI * 2); ctx.fill();
-  if (opt.rim && r > 2) {
-    // 浅色水面上，给光球加一圈深一点的边，免得和背景糊在一起
-    ctx.strokeStyle = rgba(mixc(col, [0, 0, 0], 0.35), 0.55 * a * opt.rim);
-    ctx.lineWidth = 1;
-    ctx.stroke();
+/** 日程点在此刻光线下的用色（由世界按 look 算好） */
+export interface OrbPaint {
+  fill: RGB;      // 颜料本色（已按光和雾处理）
+  pale: RGB;      // 颜料薄处透出的亮色（蛤粉）
+  line: RGB;      // 勾边：白天是墨，夜里是淡淡的蛤粉
+  lineA: number;
+  shadow: RGB;    // 地上的淡影
+  seed: number;   // 让每个点的边略有不同
+}
+
+/** 略不规整的圆，像毛笔点出来的 */
+function dotPath(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, seed: number) {
+  const s = (seed % 628) / 100, n = r > 10 ? 28 : 16;
+  ctx.beginPath();
+  for (let i = 0; i <= n; i++) {
+    const t = (i / n) * Math.PI * 2;
+    const k = 1 + 0.012 * Math.sin(3 * t + s) + 0.008 * Math.sin(5 * t + 2.3 * s);
+    const px = x + Math.cos(t) * r * k, py = y + Math.sin(t) * r * k;
+    if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py);
   }
+  ctx.closePath();
+}
+
+/**
+ * 画一个日程点：一笔矿物颜料点在路面上方，颜料中间薄、边上积得厚，外面一圈细墨线。
+ * 不发光。返回点心的 y。
+ */
+export function drawOrb(ctx: CanvasRenderingContext2D, o: OrbGeom, p: OrbPaint, a: number): number {
+  const r = o.r, cy = o.wy - r * 1.15;
+  if (a < 0.01) return cy;
+  if (r > 2.5) {
+    ctx.fillStyle = rgba(p.shadow, 0.16 * a);
+    ellipsePath(ctx, o.x, o.wy + r * 0.1, r * 1.05, r * 0.26); ctx.fill();
+  }
+  if (r < 2.2) {
+    // 太远太小，只剩一点颜色
+    ctx.fillStyle = rgba(p.fill, a);
+    ctx.beginPath(); ctx.arc(o.x, cy, r, 0, Math.PI * 2); ctx.fill();
+    return cy;
+  }
+  dotPath(ctx, o.x, cy, r, p.seed);
+  const g = ctx.createRadialGradient(o.x - r * 0.22, cy - r * 0.28, 0, o.x, cy, r);
+  g.addColorStop(0, rgba(mixc(p.fill, p.pale, 0.16), a));
+  g.addColorStop(0.65, rgba(p.fill, a));
+  g.addColorStop(1, rgba(mixc(p.fill, p.shadow, 0.28), a));
+  ctx.fillStyle = g; ctx.fill();
+  ctx.strokeStyle = rgba(p.line, p.lineA * a);
+  ctx.lineWidth = clamp(r * 0.075, 0.7, 1.8);
+  ctx.stroke();
   return cy;
 }
 

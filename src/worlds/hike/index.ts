@@ -6,7 +6,7 @@ import {
   mixc, mod, rgba, rng, smooth, strokeLine,
 } from './paint';
 import { type Sky, celestial, drawSky, nightAt, skyAt } from './sky';
-import { type Look, OCHRE, INK, SILK, lookAt, pigment } from './look';
+import { type Look, OCHRE, INK, SILK, SHELL_WHITE, VERMILION, lookAt, pigment } from './look';
 import { daylightAt } from '../../model/daylight';
 import { Scenery } from './scenery';
 import { silkPattern } from './silk';
@@ -119,7 +119,7 @@ export class HikeWorld implements World {
     this.drawPast(ctx, sky, look);
     this.drawHorizonMarks(ctx, f.now, look);
     this.drawSilk(ctx, look);
-    this.drawEvents(ctx, f.events, night, look);
+    this.drawEvents(ctx, f.events, look);
     this.drawNowLine(ctx, f.now, look);
   }
 
@@ -465,7 +465,7 @@ export class HikeWorld implements World {
     return { x, wy, z, r: Math.min(36, Math.max(1.3, (size * this.S) / z)) };
   }
 
-  private drawEvents(ctx: CanvasRenderingContext2D, events: EventView[], night: number, look: Look) {
+  private drawEvents(ctx: CanvasRenderingContext2D, events: EventView[], look: Look) {
     const { T } = this;
     this.hits = [];
     const visible: [EventView, OrbGeom][] = [];
@@ -478,20 +478,32 @@ export class HikeWorld implements World {
     }
     visible.sort((a, b) => b[1].z - a[1].z); // 远的先画
 
+    const dark = 1 - look.daylight;
+    const shadow = pigment(mixc(OCHRE, INK, 0.6), look);
+    // 夜里勾边换成淡淡的蛤粉，像灯下颜料边上的一点反光
+    const line = mixc(pigment(INK, look), mixc(SHELL_WHITE, look.tint, 0.3), dark);
+    const lineA = 0.75 - 0.2 * dark;
+
     for (const [ev, o] of visible) {
       let a = smooth(0.32, 0.85, o.z) * (o.z > 30 ? 0.75 : 1);
-      const col = colorOf(ev.title);
       const live = ev.state === 'live';
       if (ev.state === 'ended') a *= 0.45;
+      // 颜料在夜里比山水少压暗一些，日程始终是画里最醒目的几笔
+      const raw = colorOf(ev.title), mist = 0.45 * smooth(4, 60, o.z);
+      const fill = mixc(pigment(raw, look, mist), mixc(raw, look.tint, mist), 0.5 * dark);
+      const paint = { fill, pale: SHELL_WHITE, line, lineA, shadow, seed: hashStr(ev.id) };
 
-      if (live && a > 0.05) {
-        // 进行中：水面上一圈静止的光环
-        ctx.strokeStyle = rgba(look.light ? mixc(col, [0, 0, 0], 0.3) : col, 0.6 * a);
-        ctx.lineWidth = 1.2;
-        ellipsePath(ctx, o.x, o.wy, o.r * 2, o.r * 0.55);
-        ctx.stroke();
+      const cy = drawOrb(ctx, o, paint, a);
+      if (live && a > 0.05 && o.r > 2.2) {
+        // 进行中：外面再勾一圈朱砂，地上一圈淡淡的朱砂
+        const red = mixc(pigment(VERMILION, look), [255, 200, 170], 0.45 * dark);
+        ctx.strokeStyle = rgba(red, 0.8 * a);
+        ctx.lineWidth = clamp(o.r * 0.08, 1, 2);
+        ctx.beginPath(); ctx.arc(o.x, cy, o.r * 1.32, 0, Math.PI * 2); ctx.stroke();
+        ctx.strokeStyle = rgba(red, 0.4 * a);
+        ctx.lineWidth = 1;
+        ellipsePath(ctx, o.x, o.wy, o.r * 1.9, o.r * 0.5); ctx.stroke();
       }
-      const cy = drawOrb(ctx, o, col, a, { night, glow: live ? 1.6 : 1, rim: look.daylight });
 
       if (o.z < 2.7 && o.z > 0.72) {
         const la = a * smooth(2.7, 2.1, o.z) * smooth(0.72, 0.95, o.z);
