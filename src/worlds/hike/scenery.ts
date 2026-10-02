@@ -354,8 +354,10 @@ export class Scenery {
         const kind = r();
         const seed = Math.floor(r() * 1e9);
         if (kind < 0.32) {
-          // 一到三棵树
-          const n = 1 + Math.floor(r() * 3), d = 0.12 + r() * 1.2;
+          // 树要稀：这一格里多半空着留白，偶尔一棵，少有两棵
+          // （为了不打乱别的景物，随机数照旧取，只是不画）
+          const u = r();
+          const n = kind < 0.12 ? (u < 0.75 ? 1 : 2) : 0, d = 0.12 + r() * 1.2;
           for (let i = 0; i < n; i++) {
             const [x, y, z] = at(d + i * (0.15 + r() * 0.2), h0 + (r() - 0.5) * 0.5);
             const s = this.scale(z);
