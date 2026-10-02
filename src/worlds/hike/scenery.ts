@@ -419,10 +419,11 @@ export class Scenery {
    * 远处用 a 淡掉。样子由 r（这一处景物自己的随机数）决定，同一时刻永远一样。
    */
 
-  /** 树：路边多是柳，远些是阔叶树和松 */
+  /** 树：以柳为主（靠路的几乎都是柳），偶尔一棵阔叶树或松 */
   private treeSprite(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, d: number, look: Look, a: number, r: () => number) {
     const u = r();
-    const kind = d < 0.35 ? (u < 0.55 ? 2 : u < 0.8 ? 0 : 1) : (u < 0.5 ? 0 : u < 0.85 ? 1 : 2);
+    const willow = d < 0.35 ? 0.9 : 0.7;
+    const kind = u < willow ? 2 : u < willow + (1 - willow) * 0.6 ? 0 : 1;
     // 树高大约和路宽相当（路宽 1 个单位）
     const h = (0.45 + r() * 0.25) * s;
     this.treeArt[kind].drawSmall(ctx, x, y, h, look, a, r() < 0.5);
