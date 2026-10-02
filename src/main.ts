@@ -1,15 +1,16 @@
 import './styles.css';
-import type { CalEvent, Frame } from './model/types';
+import type { CalEvent, Frame, Goal } from './model/types';
 import { Viewport } from './model/viewport';
 import { nextStateChange, prepLeft, withStates } from './model/states';
 import { fmtDay, fmtTime, HOUR, MINUTE } from './model/time';
 import { openStore } from './data/store';
 import { Sheet } from './ui/sheet';
 import { ListView } from './ui/list';
+import { GoalForm } from './ui/goal';
 import { type Theme, themeAt } from './model/daylight';
-import type { World } from './worlds/world';
+import { type World, GOAL_HIT } from './worlds/world';
 import { HikeWorld } from './worlds/hike';
-import { ClimbWorld } from './worlds/climb';
+import { ClimbWorld, summitOf } from './worlds/climb';
 
 const canvas = document.getElementById('world') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
@@ -43,6 +44,7 @@ function useWorld(id: string): World {
   for (const b of document.querySelectorAll<HTMLButtonElement>('#modes button')) {
     b.setAttribute('aria-pressed', String(b.dataset.mode === id));
   }
+  (document.getElementById('goal-btn') as HTMLButtonElement).hidden = id !== 'climb';
   return w;
 }
 
@@ -59,12 +61,23 @@ document.getElementById('modes')!.addEventListener('click', e => {
  * 存在本机（IndexedDB）。启动时全部读进来，改动后重新读一遍。
  */
 let events: CalEvent[] = [];
+/** 登山的目标（山顶的旗） */
+let goal: Goal | null = null;
 let sheet: Sheet | null = null;
 let list: ListView | null = null;
+let goalForm: GoalForm | null = null;
 const note = document.getElementById('note') as HTMLElement;
 
 openStore().then(async store => {
   events = await store.all();
+  goal = await store.goal();
+  goalForm = new GoalForm({
+    store,
+    changed(g) {
+      goal = g;
+      requestRender();
+    },
+  });
   sheet = new Sheet({
     store,
     find: id => events.find(e => e.id === id),
@@ -113,6 +126,11 @@ function showNote(persistent: boolean) {
 
 document.getElementById('open-list')!.addEventListener('click', () => list?.open());
 
+function openGoal() {
+  goalForm?.open(goal, summitOf(Date.now(), null).ms);
+}
+document.getElementById('goal-btn')!.addEventListener('click', openGoal);
+
 document.getElementById('add')!.addEventListener('click', () => {
   // 新建的日程默认放在正在看的时间
   sheet?.openNew(viewport.viewTime(Date.now()));
@@ -156,7 +174,7 @@ function requestRender() {
 }
 
 function makeFrame(now: number): Frame {
-  return { now, view: viewport.viewTime(now), events: withStates(events, now) };
+  return { now, view: viewport.viewTime(now), events: withStates(events, now), goal };
 }
 
 function render() {
@@ -239,7 +257,8 @@ function endDrag(e: PointerEvent) {
   if (e.type === 'pointerup' && down.moved < 8 && performance.now() - down.t < 600) {
     const r = canvas.getBoundingClientRect();
     const id = world.hitTest(e.clientX - r.left, e.clientY - r.top);
-    if (id) sheet?.openDetail(id);
+    if (id === GOAL_HIT) openGoal();
+    else if (id) sheet?.openDetail(id);
   }
 }
 canvas.addEventListener('pointerup', endDrag);
@@ -256,7 +275,7 @@ canvas.addEventListener('wheel', e => {
 
 const KEYS: Record<string, number> = { ArrowDown: 1, ArrowUp: -1, PageDown: 24, PageUp: -24 };
 window.addEventListener('keydown', e => {
-  if (e.altKey || e.ctrlKey || e.metaKey || dragId !== null || sheet?.isOpen || list?.isOpen) return;
+  if (e.altKey || e.ctrlKey || e.metaKey || dragId !== null || sheet?.isOpen || list?.isOpen || goalForm?.isOpen) return;
   if (e.target instanceof HTMLElement && e.target.closest('input, textarea, select, button')) return;
   const t = performance.now();
   if (e.key in KEYS) viewport.nudge(KEYS[e.key], t);
@@ -314,6 +333,12 @@ function describe(f: Frame) {
   if (live.length) text += `正在进行：${live.map(e => e.title).join('、')}。`;
   if (next) text += `下一个日程：${next.title}，${fmtDay(next.start)} ${fmtTime(next.start)} 开始。`;
   if (next?.state === 'soon' && prepLeft(next)) text += `还有 ${prepLeft(next)} 项准备没做完。`;
+  if (world.id === 'climb') {
+    text += f.goal
+      ? `目标：${f.goal.title}，${fmtDay(f.goal.due)}截止。`
+      : '还没有设目标，山顶的旗先插在月底。';
+    text += '点山顶的旗可以设目标和截止日。';
+  }
   text += world.id === 'climb' ? '左右或上下拖动' : '上下拖动';
   text += '可以去看未来或回看过去，方向键按小时移动，Home 键回到现在。右上角的“列表”按钮可以按列表查看和搜索全部日程，左上角可以切换远足和登山两种模式。';
   if (text !== lastDescription) {

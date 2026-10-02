@@ -1,5 +1,5 @@
-import type { World } from '../world';
-import type { EventView, Frame } from '../../model/types';
+import { type World, GOAL_HIT } from '../world';
+import type { EventView, Frame, Goal } from '../../model/types';
 import { addDays, fmtDay, fmtSpan, fmtTime, isAllDay, localHours, startOfDay } from '../../model/time';
 import { prepLeft } from '../../model/states';
 import { daylightAt } from '../../model/daylight';
@@ -60,6 +60,8 @@ export class ClimbWorld implements World {
   private rh: number[] = []; private rx: number[] = []; private ry: number[] = [];
   private terrain = new Terrain();
   private hits: Hit[] = [];
+  /** 山顶的旗占的地方（连同上面的字），点一下设目标 */
+  private summitHit: Hit | null = null;
 
   private art: {
     walk: Sprite; steep: Sprite; rest: Sprite; companion: Sprite;
@@ -190,7 +192,7 @@ export class ClimbWorld implements World {
     const { W, H } = this;
     this.T = localHours(f.view);
     const nowH = localHours(f.now);
-    const summit = summitOf(f.now);
+    const summit = summitOf(f.now, f.goal);
     this.terrain.update(f.events, f.now, summit.h);
     this.buildRidge();
 
@@ -216,7 +218,10 @@ export class ClimbWorld implements World {
     drawSilk(ctx, W, H, look);
     this.drawSummit(ctx, summit, f.now, look);
     const reserved = this.drawClimber(ctx, f, nowH, look);
+    this.hits = [];
     this.drawCamps(ctx, f.events, look, reserved);
+    // 山顶的旗最后放，点到它时优先于旁边的日程
+    if (this.summitHit) this.hits.push(this.summitHit);
   }
 
   dragHours(x: number, _y: number, dx: number, dy: number): number {
@@ -565,6 +570,7 @@ export class ClimbWorld implements World {
   /** 山顶的旗：截止日。总是露在云上面 */
   private drawSummit(ctx: CanvasRenderingContext2D, summit: Summit, now: number, look: Look) {
     const { W, H } = this;
+    this.summitHit = null;
     const [x, y] = this.at(summit.h);
     if (x < -30 || x > W + 30) return;
     const k = Math.max(0.45, this.scaleAt(summit.h));
@@ -578,11 +584,17 @@ export class ClimbWorld implements World {
       ctx.fillStyle = rgba(pigment(VERMILION, look), 1);
       ctx.beginPath(); ctx.moveTo(x, y - fh); ctx.lineTo(x + fh * 0.3, y - fh * 0.9); ctx.lineTo(x, y - fh * 0.8); ctx.fill();
     }
-    const days = Math.max(0, Math.ceil((startOfDay(summit.ms) - startOfDay(now)) / 86_400_000));
     // 靠右边时字写在旗的左边，也不压住右上角的按钮
     const right = x > W - 90;
-    const ly = Math.max(this.insetTop + 86, y - fh - 4);
-    drawLabel(ctx, right ? x - 10 : x, right ? Math.max(ly, y - fh * 0.4) : ly, summit.label, days ? `还有 ${days} 天` : '就是今天', 0.95, look, right ? 'right' : 'center');
+    const ly0 = Math.max(this.insetTop + 86, y - fh - 4);
+    const lx = right ? x - 10 : x, ly = right ? Math.max(ly0, y - fh * 0.4) : ly0;
+    const sub = summitSub(summit, now);
+    drawLabel(ctx, lx, ly, summit.label, sub, 0.95, look, right ? 'right' : 'center');
+    // 点旗或字都能打开目标
+    ctx.font = `600 12px ${SANS}`;
+    const tw = Math.max(ctx.measureText(summit.label).width, ctx.measureText(sub).width * 0.9);
+    const x0 = Math.min(x - 16, right ? lx - tw : lx - tw / 2), x1 = Math.max(x + 16, right ? lx : lx + tw / 2);
+    this.summitHit = { id: GOAL_HIT, x: (x0 + x1) / 2, y: y + 4, w: x1 - x0 + 8, h: y + 4 - (ly - 32) };
   }
 
   /* ---------- 营地 ---------- */
@@ -590,7 +602,6 @@ export class ClimbWorld implements World {
   /** 营地和石堆。reserved：已经被占掉、标签要避开的地方（爬山的人和他头顶的字） */
   private drawCamps(ctx: CanvasRenderingContext2D, events: EventView[], look: Look, reserved: Box[]) {
     const { W, H, CX, T } = this;
-    this.hits = [];
     const campH = clamp(H * 0.05, 34, 52);
     const dark = 1 - look.daylight;
     const line = mixc(pigment(INK, look), mixc(SHELL_WHITE, look.tint, 0.3), dark);
@@ -767,18 +778,30 @@ const overlaps = (a: Box, b: Box) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 &
 
 /* ---------- 山顶 ---------- */
 
-interface Summit { ms: number; h: number; label: string }
+export interface Summit { ms: number; h: number; label: string; goal: boolean }
 
 /**
- * 山顶：先放在月底那天傍晚（离月底不到 5 天就放到下个月底）。
- * 以后可以自己设目标和截止日。
+ * 山顶：自己设了目标就插在截止日；没设时先放在月底那天傍晚（离月底不到 5 天就放到下个月底）。
  */
-function summitOf(now: number): Summit {
+export function summitOf(now: number, goal: Goal | null): Summit {
+  if (goal) {
+    const t = goal.title.length > 14 ? goal.title.slice(0, 13) + '…' : goal.title;
+    return { ms: goal.due, h: localHours(goal.due), label: t, goal: true };
+  }
   const d = new Date(now);
   let end = new Date(d.getFullYear(), d.getMonth() + 1, 0, 18).getTime();
   if (end - now < 5 * 86_400_000) end = new Date(d.getFullYear(), d.getMonth() + 2, 0, 18).getTime();
   const e = new Date(end);
-  return { ms: end, h: localHours(end), label: `月底 · ${e.getMonth() + 1}月${e.getDate()}日` };
+  return { ms: end, h: localHours(end), label: `月底 · ${e.getMonth() + 1}月${e.getDate()}日`, goal: false };
+}
+
+/** 旗下第二行：设了目标写日期和还有几天；没设时提示可以点 */
+function summitSub(s: Summit, now: number): string {
+  const days = Math.round((startOfDay(s.ms) - startOfDay(now)) / 86_400_000);
+  const left = days > 0 ? `还有 ${days} 天` : days === 0 ? '就是今天' : `已过 ${-days} 天`;
+  if (!s.goal) return `${left} · 点旗设目标`;
+  const d = new Date(s.ms);
+  return `${d.getMonth() + 1}月${d.getDate()}日 · ${left}`;
 }
 
 /** 标签第二行：临近和进行中提醒还要准备几项；记录显示结论的开头 */
