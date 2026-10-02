@@ -13,9 +13,24 @@
   <button id="viewing" class="viewing" type="button">
     <span class="when"></span><span class="back">回到现在</span>
   </button>
+  <button id="open-list" class="open-list" type="button">列表</button>
   <button id="add" class="add" type="button"><span aria-hidden="true">＋</span>新建</button>
   <p id="note" class="note" hidden></p>
 </main>
+<dialog id="list" class="list" aria-label="日程列表">
+  <header>
+    <h2 tabindex="-1">日程列表</h2>
+    <button type="button" class="close">回到画面</button>
+  </header>
+  <input class="search" type="search" placeholder="搜索标题、备注、准备事项、结论" aria-label="搜索日程" autocomplete="off" enterkeyhint="search">
+  <div class="tabs" role="group" aria-label="显示哪些日程">
+    <button type="button" data-tab="next" aria-pressed="true">接下来</button>
+    <button type="button" data-tab="past" aria-pressed="false">过去</button>
+    <span class="status" role="status" aria-live="polite"></span>
+  </div>
+  <div class="groups"></div>
+  <p class="empty" hidden></p>
+</dialog>
 <dialog id="sheet" class="sheet">
   <section class="detail" hidden>
     <p class="state"></p>

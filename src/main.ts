@@ -5,6 +5,7 @@ import { nextStateChange, prepLeft, withStates } from './model/states';
 import { fmtDay, fmtTime, HOUR, MINUTE } from './model/time';
 import { openStore } from './data/store';
 import { Sheet } from './ui/sheet';
+import { ListView } from './ui/list';
 import { type Theme, themeAt } from './model/daylight';
 import type { World } from './worlds/world';
 import { HikeWorld } from './worlds/hike';
@@ -23,6 +24,7 @@ const world: World = new HikeWorld(() => requestRender());
  */
 let events: CalEvent[] = [];
 let sheet: Sheet | null = null;
+let list: ListView | null = null;
 const note = document.getElementById('note') as HTMLElement;
 
 openStore().then(async store => {
@@ -33,9 +35,11 @@ openStore().then(async store => {
     async changed() {
       events = await store.all();
       showNote(store.persistent);
+      list?.forceRefresh();
       requestRender();
     },
   });
+  list = new ListView({ events: () => events, openDetail: id => sheet?.openDetail(id) });
   showNote(store.persistent);
   requestRender();
 });
@@ -47,6 +51,8 @@ function showNote(persistent: boolean) {
   note.textContent = text;
   note.hidden = !text;
 }
+
+document.getElementById('open-list')!.addEventListener('click', () => list?.open());
 
 document.getElementById('add')!.addEventListener('click', () => {
   // 新建的日程默认放在正在看的时间
@@ -103,6 +109,7 @@ function render() {
   world.draw(ctx, frame);
   redraws++;
   describe(frame);
+  list?.refresh(now);
   showViewing(frame);
   canvas.classList.add('ready');
 
@@ -186,7 +193,7 @@ canvas.addEventListener('wheel', e => {
 
 const KEYS: Record<string, number> = { ArrowDown: 1, ArrowUp: -1, PageDown: 24, PageUp: -24 };
 window.addEventListener('keydown', e => {
-  if (e.altKey || e.ctrlKey || e.metaKey || dragId !== null || sheet?.isOpen) return;
+  if (e.altKey || e.ctrlKey || e.metaKey || dragId !== null || sheet?.isOpen || list?.isOpen) return;
   if (e.target instanceof HTMLElement && e.target.closest('input, textarea, select, button')) return;
   const t = performance.now();
   if (e.key in KEYS) viewport.nudge(KEYS[e.key], t);
@@ -244,7 +251,7 @@ function describe(f: Frame) {
   if (live.length) text += `正在进行：${live.map(e => e.title).join('、')}。`;
   if (next) text += `下一个日程：${next.title}，${fmtDay(next.start)} ${fmtTime(next.start)} 开始。`;
   if (next?.state === 'soon' && prepLeft(next)) text += `还有 ${prepLeft(next)} 项准备没做完。`;
-  text += '上下拖动可以去看未来或回看过去，方向键按小时移动，Home 键回到现在。';
+  text += '上下拖动可以去看未来或回看过去，方向键按小时移动，Home 键回到现在。右上角的“列表”按钮可以按列表查看和搜索全部日程。';
   if (text !== lastDescription) {
     canvas.setAttribute('aria-label', text);
     lastDescription = text;
