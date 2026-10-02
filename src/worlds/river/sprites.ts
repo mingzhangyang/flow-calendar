@@ -66,10 +66,13 @@ export class Sprite {
   }
 
   /**
-   * 岸上的东西：底边的落地点（info.ax）对准 (x, y)，高 h（CSS 像素）。
+   * 岸上的东西：底边的落地点（info.ax，或传入的 anchor）对准 (x, y)，高 h（CSS 像素）。
    * 近处的东西不罩雾；远处淡掉用 alpha。
    */
-  drawSmall(ctx: CanvasRenderingContext2D, x: number, y: number, h: number, look: Look, alpha: number, flip: boolean) {
+  drawSmall(
+    ctx: CanvasRenderingContext2D, x: number, y: number, h: number,
+    look: Look, alpha: number, flip: boolean, anchor = this.info.ax,
+  ) {
     if (!this.day || !this.night) return;
     const light = lightKey(look, 0, 0);
     if (light !== this.mipLight || !this.mips.length) {
@@ -94,7 +97,7 @@ export class Sprite {
     let lv = this.mips.length - 1;
     while (lv > 0 && this.mips[lv].height < need) lv--;
     const w = h * this.aspect;
-    const ax = flip ? 1 - this.info.ax : this.info.ax;
+    const ax = flip ? 1 - anchor : anchor;
     blit(ctx, this.mips[lv], x - ax * w, y - h, w, h, alpha, flip);
   }
 

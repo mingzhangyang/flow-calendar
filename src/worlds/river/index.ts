@@ -8,7 +8,7 @@ import {
 import { type Sky, celestial, drawSky, nightAt, skyAt } from './sky';
 import { type Look, OCHRE, INK, lookAt, pigment } from './look';
 import { daylightAt } from '../../model/daylight';
-import { Scenery } from './scenery';
+import { BRIDGE_W, Scenery } from './scenery';
 import { silkPattern } from './silk';
 
 /**
@@ -75,11 +75,12 @@ export class RiverWorld implements World {
     this.scenery.drawFar(ctx, sky, look, this.T);
     this.drawWater(ctx, look, body);
     this.drawWaterLines(ctx, look);
+    // 水纹在岸上景物和桥之前画，免得盖住桥身
+    this.drawRipples(ctx, look);
     this.drawBank(ctx, -1, sky, look);
     this.drawBank(ctx, 1, sky, look);
     this.scenery.drawBanks(ctx, (X, h) => this.project(X, h), bend, this.T, TAU, look);
     this.drawHaze(ctx, sky);
-    this.drawRipples(ctx, look);
     this.drawHorizonMarks(ctx, f.now, look);
     this.drawSilk(ctx, look);
     this.drawEvents(ctx, f.events, night, look);
@@ -154,7 +155,8 @@ export class RiverWorld implements World {
     ctx.lineWidth = 1;
     for (let h = Math.ceil(T - TAU * 0.68); h < T + TAU * 13; h++) {
       const z = this.z(h), gap = D / z - D / (z + 1 / TAU);
-      const isMidnight = mod(h, 24) === 0;
+      // 午夜线加重，标出一天的分界；有桥时由桥来标，线就和别的钟点一样
+      const isMidnight = mod(h, 24) === 0 && !this.scenery.bridges;
       const a = gain * smooth(2.5, 9, gap) * (isMidnight ? 0.5 : 0.2) * smooth(0.32, 0.6, z);
       if (a > 0.005) this.polyAcross(ctx, h, c, a);
     }
@@ -280,7 +282,8 @@ export class RiverWorld implements World {
     for (const [ms, text] of marks) {
       if (ms === tomorrow && monday === tomorrow && text === '下周一') continue;
       const h = localHours(ms);
-      const [x, y, z] = this.project(bend(h) - 0.92, h);
+      // 有桥时，路标写在桥头（桥的左端外面一点）
+      const [x, y, z] = this.project(bend(h) - (this.scenery.bridges ? BRIDGE_W / 2 + 0.06 : 0.92), h);
       if (z < 1.25 || z > 280) continue;
       if (Math.abs(y - lastY) < 13) continue; // 挤在一起就只留前一个
       lastY = y;
