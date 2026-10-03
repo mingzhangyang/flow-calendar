@@ -131,7 +131,7 @@ body { overflow: hidden; -webkit-font-smoothing: antialiased; overscroll-behavio
 
 .sheet .hint { color: var(--ink-soft); font-size: 14px; margin-bottom: 14px; }
 
-/* 登山模式的“回望”：左下角，和“新建”一排 */
+/* 登山、农场的“回望”：左下角，和“新建”一排 */
 .overview {
   position: absolute; left: 16px; bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
   padding: 10px 16px; border: 1px solid var(--line); border-radius: 999px;
