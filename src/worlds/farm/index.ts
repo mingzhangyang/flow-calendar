@@ -1,7 +1,7 @@
 import type { World } from '../world';
 import type { EventView, Frame, Kind } from '../../model/types';
 import { kindOf } from '../../model/kind';
-import { DAY, HOUR, MINUTE, fmtDay, fmtTime, isAllDay, localHours } from '../../model/time';
+import { DAY, HOUR, MINUTE, WEEKDAYS, fmtDay, fmtTime, isAllDay, localHours } from '../../model/time';
 import { daylightAt } from '../../model/daylight';
 import { type RGB, SANS, clamp, mixc, mod, rgba, rng, smooth } from '../hike/paint';
 import { subLabel } from '../climb';
@@ -9,7 +9,8 @@ import { subLabel } from '../climb';
 /**
  * 农场世界：农民画。把日历铺在地上，从上往下看，拼成一块块彩色的格子。
  *
- * 一天是一块地，一周一行（周一到周日从左到右），往上是以后的周，往下是过去的周。
+ * 一天是一长条地，铺满屏宽，一天一行往上排：往上是以后的日子，往下是过去的日子，
+ * 一屏五六天；周日和周一之间隔一排小灌木，看得出一周一周。
  * 一块地里横向是这一天的钟点：6 点在左边、22 点在右边，夜里的日程挤在两头。
  *
  * 做过的事留在地里，按类型（kind.ts）是不同的农活，都只算已经过去的时段：
@@ -23,14 +24,14 @@ import { subLabel } from '../climb';
  *
  * 画风：户县农民画——大块饱和的平涂、粗墨线、满纹样，不讲透视。
  * 上面一条天（日月、卷云、圆圆的小山），下面一条村子（红瓦房、粮仓、树、鸡），都钉在屏幕上；
- * 田在两者之间上下滑动：视角随时间连续往前挪，一周一行，这一周那行总在“视角”线上下半行内。
+ * 田在两者之间上下滑动：视角随时间连续往前挪，一天一行，此刻落在“视角”线（屏高 60%）上。
  * 明暗跟着视角所在的时间：白天和夜里各一套颜色，按白天程度混合；早晚天空染橙红。
  */
 
 /** 地里的一天从几点到几点（铺满一块地的宽） */
 const DAY0 = 6, DAY1 = 22;
-/** 一行的高和一块地的宽之比 */
-const ROW_K = 1.1;
+/** 一屏大约排几天 */
+const DAYS_ON_SCREEN = 5.6;
 
 /* ---------- 颜色 ---------- */
 
@@ -91,8 +92,7 @@ const overlaps = (a: Box, b: Box) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 &
 
 /** 本地小时数 → 第几天（本地午夜为界） */
 const dayOf = (h: number) => Math.floor(h / 24);
-/** 第几天 → 第几周、周几（0 是周一）。第 0 天（1970-01-01）是周四 */
-const weekOf = (d: number) => Math.floor((d + 3) / 7);
+/** 第几天 → 周几（0 是周一）。第 0 天（1970-01-01）是周四 */
 const colOf = (d: number) => mod(d + 3, 7);
 /** 一块地里，某个钟点在横向的位置（0–1） */
 const uIn = (hod: number) => (clamp(hod, DAY0, DAY1) - DAY0) / (DAY1 - DAY0);
@@ -121,9 +121,9 @@ export class FarmWorld implements World {
   private insetTop = 0; private insetBottom = 0;
   /** 天那一条的下沿、村子那一条的上沿、“视角”线 */
   private SKY = 0; private VIL = 0; private FY = 0;
-  /** 一块地多宽、一行多高、田的左边 */
-  private Fx = 0; private RH = 0; private X0 = 0;
-  /** 视角所在的行（连续） */
+  /** 一块地多宽、一行（一天）多高、田的左边、地和地之间上下各让出多少 */
+  private PW = 0; private RH = 0; private X0 = 0; private GAP = 0;
+  /** 视角所在的天（连续） */
   private vc = 0;
   private hits: Hit[] = [];
   private tilled = new Map<number, Work>();
@@ -142,20 +142,35 @@ export class FarmWorld implements World {
     this.SKY = insets.top + clamp(h * 0.13, 90, 130);
     this.VIL = h - insets.bottom - clamp(h * 0.11, 70, 110);
     this.FY = h * 0.6;
-    // 一周七块地铺满屏宽；桌面上按高度收，往上排得下六七周
-    this.Fx = Math.min((w - 20) / 7, h * 0.075);
-    this.RH = this.Fx * ROW_K;
-    this.X0 = (w - 7 * this.Fx) / 2;
+    // 一天一长条，手机上铺满屏宽，桌面上不超过 760，两边是草地
+    this.PW = Math.min(w - 32, 760);
+    this.X0 = (w - this.PW) / 2;
+    this.RH = clamp((this.VIL - this.SKY) / DAYS_ON_SCREEN, 78, 140);
+    this.GAP = this.RH * 0.08;
     this.plots.clear();
   }
 
-  /** 地上 v（往上数的行）在屏幕上的高度 */
+  /** 地上 v（往上数的天，第 d 天占 d 到 d+1）在屏幕上的高度 */
   private yAt(v: number) { return this.FY - (v - this.vc) * this.RH; }
+
+  /** 第 d 天的日期牌在屏幕上占的地方（标签要让开） */
+  private badgeBox(ctx: CanvasRenderingContext2D, d: number, today: number): Box {
+    const p = this.plotOf(d);
+    ctx.save();
+    const { br, tw } = badgeSize(ctx, dayText(d, d === today), p.h);
+    ctx.restore();
+    return { x0: p.x, x1: p.x + tw + 6, y0: p.y, y1: p.y + br * 2 + 4 };
+  }
+
+  /** 第 d 天那块地（不含田埂）：左上角、宽、高 */
+  private plotOf(d: number) {
+    return { x: this.X0, y: this.yAt(d + 1) + this.GAP, w: this.PW, h: this.RH - 2 * this.GAP };
+  }
 
   draw(ctx: CanvasRenderingContext2D, f: Frame) {
     const { W, H } = this;
     const T = localHours(f.view), nowH = localHours(f.now);
-    this.vc = (T / 24 + 3) / 7 - 0.5;
+    this.vc = T / 24;
     this.tilled = tillage(f.events, nowH);
     this.orchard = orchardOf(f.events, f.now);
     const hod = mod(T, 24);
@@ -187,8 +202,8 @@ export class FarmWorld implements World {
   }
 
   dragHours(_x: number, _y: number, _dx: number, dy: number): number {
-    // 平铺不讲透视：往下拖一行就是一周，手指下的地跟着手指走
-    return (dy / this.RH) * 7 * 24;
+    // 平铺不讲透视：往下拖一行就是一天，手指下的地跟着手指走
+    return (dy / this.RH) * 24;
   }
 
   hitTest(x: number, y: number): string | null {
@@ -214,7 +229,7 @@ export class FarmWorld implements World {
       for (let d = d0; d <= dayOf(nowH); d++) for (const [a, b] of this.tilled.get(d)?.[k] ?? []) n += (b - a) * (DAY1 - DAY0);
       return Math.round(n);
     };
-    let text = `一天是一块地，一周一行，往上是以后的日子。这周耕地约 ${hours('focus')} 小时，播种约 ${hours('learn')} 小时。`
+    let text = `一天是一长条地，往上是以后的日子。这周耕地约 ${hours('focus')} 小时，播种约 ${hours('learn')} 小时。`
       + '专注是耕地，两周左右熟成金黄；学习是播种，两周后才发芽；会议是赶集；习惯是浇果树。没做事的日子，地空着长草。';
     const trip = f.events.find(e => e.state !== 'ended' && kindOf(e) === 'meet' && e.prep?.length);
     if (trip) {
@@ -330,44 +345,42 @@ export class FarmWorld implements World {
     ctx.fillRect(0, this.SKY, this.W, this.H - this.SKY);
   }
 
-  private visibleRows(): [number, number] {
+  private visibleDays(): [number, number] {
     // 往上画到天，往下画到画面底边
     return [Math.floor(this.vc + (this.FY - this.H) / this.RH) - 1, Math.ceil(this.vc + (this.FY - this.SKY) / this.RH)];
   }
 
   private drawPlots(ctx: CanvasRenderingContext2D, nowH: number, pal: Pal, daylight: number) {
-    const { Fx, RH, X0 } = this;
-    const [w0, w1] = this.visibleRows();
+    const [d0, d1] = this.visibleDays();
     const today = dayOf(nowH);
     const dpr = ctx.getTransform().a || 1;
-    const gap = Fx * 0.07, pw = Fx - 2 * gap, ph = RH - 2 * gap;
-    const pad = Math.ceil(Fx * 0.06);
     const lightKey = Math.round(daylight * 16);
-    for (let w = w0; w <= w1; w++) {
-      const yTop = this.yAt(w + 1);
-      for (let col = 0; col < 7; col++) {
-        const d = 7 * w - 3 + col;
-        const work = d <= today ? this.tilled.get(d) ?? NO_WORK : NO_WORK;
-        const age = (nowH - (d + 1) * 24) / 24;
-        const when = d === today ? 'today' : d > today ? 'future' : 'past';
-        // 长到哪一步、长草的多少都随日子慢慢变，按天取整就够了
-        const grow = when === 'past' ? `${stageOf(age)}.${learnStageOf(age)}.${Math.min(7, Math.floor(age))}` : '';
-        const key = `${d}|${when}|${grow}|${workKey(work)}|${lightKey}|${Math.round(pw * dpr)}x${Math.round(ph * dpr)}`;
-        let c = this.plots.get(key);
-        if (c) {
-          // 最近用过的放到最后，满了从最久没用的删起
-          this.plots.delete(key); this.plots.set(key, c);
-        } else {
-          c = document.createElement('canvas');
-          c.width = Math.ceil((pw + 2 * pad) * dpr); c.height = Math.ceil((ph + 2 * pad) * dpr);
-          const g = c.getContext('2d')!;
-          g.setTransform(dpr, 0, 0, dpr, pad * dpr, pad * dpr);
-          paintPlot(g, pw, ph, d, work, when, age, pal, daylight >= 0.5);
-          this.plots.set(key, c);
-          if (this.plots.size > 360) this.plots.delete(this.plots.keys().next().value!);
-        }
-        ctx.drawImage(c, X0 + col * Fx + gap - pad, yTop + gap - pad, pw + 2 * pad, ph + 2 * pad);
+    for (let d = d0; d <= d1; d++) {
+      const { x, y, w: pw, h: ph } = this.plotOf(d);
+      const pad = Math.ceil(ph * 0.06);
+      // 周一底下（和周日之间）一排小灌木，分开一周一周
+      if (colOf(d) === 0) hedge(ctx, x, this.yAt(d), pw, this.GAP, pal);
+      const work = d <= today ? this.tilled.get(d) ?? NO_WORK : NO_WORK;
+      const age = (nowH - (d + 1) * 24) / 24;
+      const when = d === today ? 'today' : d > today ? 'future' : 'past';
+      // 长到哪一步、长草的多少都随日子慢慢变，按天取整就够了
+      const grow = when === 'past' ? `${stageOf(age)}.${learnStageOf(age)}.${Math.min(7, Math.floor(age))}` : '';
+      const key = `${d}|${when}|${grow}|${workKey(work)}|${lightKey}|${Math.round(pw * dpr)}x${Math.round(ph * dpr)}`;
+      let c = this.plots.get(key);
+      if (c) {
+        // 最近用过的放到最后，满了从最久没用的删起
+        this.plots.delete(key); this.plots.set(key, c);
+      } else {
+        c = document.createElement('canvas');
+        c.width = Math.ceil((pw + 2 * pad) * dpr); c.height = Math.ceil((ph + 2 * pad) * dpr);
+        const g = c.getContext('2d')!;
+        g.setTransform(dpr, 0, 0, dpr, pad * dpr, pad * dpr);
+        paintPlot(g, pw, ph, d, work, when, age, pal, daylight >= 0.5);
+        this.plots.set(key, c);
+        // 一块地的画布不小，留够一屏多一点就行
+        if (this.plots.size > 40) this.plots.delete(this.plots.keys().next().value!);
       }
+      ctx.drawImage(c, x - pad, y - pad, pw + 2 * pad, ph + 2 * pad);
     }
   }
 
@@ -375,7 +388,7 @@ export class FarmWorld implements World {
   private drawMargins(ctx: CanvasRenderingContext2D, pal: Pal) {
     const { X0, RH, W } = this;
     if (X0 < 34) return;
-    const [w0, w1] = this.visibleRows();
+    const [w0, w1] = this.visibleDays();
     const room = X0 - 12;
     const s = Math.min(RH * 0.95, room * 0.9);
     const slots = Math.max(1, Math.floor(room / (s * 0.85)));
@@ -412,7 +425,6 @@ export class FarmWorld implements World {
 
     const ground = H - this.insetBottom - bh * 0.18;
     const s = clamp(bh * 0.95, 60, 104);
-    // 房子在左中，粮仓在它右边，两头各一棵树；宽屏上多种几棵
     // 粮仓在右头（手机上“新建”按钮压着它也不要紧），房子挨着它，左边整片是果园
     const hx = W - s * 2.25;
     this.house = { x: hx, w: s * 1.15, ground };
@@ -464,7 +476,7 @@ export class FarmWorld implements World {
    * 返回他和头顶文字占掉的地方；paint 为 false 时只量不画（先量好让标签让开，最后再画到最前面）
    */
   private drawFarmer(ctx: CanvasRenderingContext2D, f: Frame, nowH: number, live: EventView | undefined, pal: Pal, light: boolean, paint: boolean): Box[] {
-    const { W, Fx, X0, RH } = this;
+    const { W, RH } = this;
     const d = dayOf(nowH), hod = nowH - d * 24;
     const home = (hod >= DAY1 || hod < DAY0) && !live;
     let x: number, y: number, s: number;
@@ -476,16 +488,15 @@ export class FarmWorld implements World {
       if (paint) folkFarmer(ctx, x, y, s, 'sit', pal);
       head = s;
     } else {
-      const w = weekOf(d), col = colOf(d);
-      const gap = Fx * 0.07, pw = Fx - 2 * gap;
-      x = X0 + col * Fx + gap + uIn(hod) * pw;
-      y = this.yAt(w) - RH * 0.16;
+      const p = this.plotOf(d);
+      x = p.x + uIn(hod) * p.w;
+      y = p.y + p.h * 0.88;
       if (y < this.SKY + 10 || y > this.VIL) return [];
-      s = clamp(RH * 0.8, 30, 70);
+      s = farmerSize(RH);
       const kind = live ? kindOf(live) : null;
       const market = kind === 'meet' && dayOf(localHours(live!.start)) === d;
-      // 赶集：站在摊子右边，不出今天这块地（夜里的会挤在地的右头）
-      if (market) x = Math.min(X0 + col * Fx + gap + uIn(localHours(live!.start) - d * 24) * pw + stallSize(RH) * 0.4, X0 + col * Fx + gap + pw * 0.92);
+      // 赶集：站在摊子右边
+      if (market) x = stallX(p.x + uIn(localHours(live!.start) - d * 24) * p.w, p.x + p.w, RH) + stallSize(RH) * 0.5;
       const pose = !kind ? 'walk' : ({ focus: 'hoe', learn: 'sow', habit: 'water', meet: 'walk' } as const)[kind];
       if (paint) folkFarmer(ctx, x, y, s, pose, pal);
       head = market ? Math.max(s, stallSize(RH)) : s;
@@ -501,7 +512,10 @@ export class FarmWorld implements World {
     ctx.font = `500 12px ${SANS}`;
     const w2 = ctx.measureText(sub).width;
     const half = Math.max(w1, w2) / 2 + 6;
-    const tx = clamp(x, half + 4, W - half - 4);
+    let tx = clamp(x, half + 4, W - half - 4);
+    // 别压住今天的日期牌：挨上了就往右让
+    const badge = this.badgeBox(ctx, d, d);
+    if (!home && ty + 2 > badge.y0 && ty - 34 < badge.y1 && tx - half < badge.x1) tx = Math.min(W - half - 4, badge.x1 + half + 4);
     const boxes = [
       { x0: tx - half, x1: tx + half, y0: ty - 34, y1: ty + 2 },
       { x0: x - s * 0.4, x1: x + s * 0.6, y0: y - s, y1: y + 4 },
@@ -526,46 +540,44 @@ export class FarmWorld implements World {
    * 做完的在地的下半截留一颗彩珠，写了结论的旁边盖一方小红印。
    */
   private drawEvents(ctx: CanvasRenderingContext2D, events: EventView[], T: number, nowH: number, pal: Pal, light: boolean, reserved: Box[]) {
-    const { Fx, RH, X0, W } = this;
-    const [w0, w1] = this.visibleRows();
-    const gap = Fx * 0.07, pw = Fx - 2 * gap, ph = RH - 2 * gap;
-    type Item = { ev: EventView; h: number; x: number; y: number; top: number; right: number };
+    const { RH, W } = this;
+    const [d0, d1] = this.visibleDays();
+    type Item = { ev: EventView; h: number; x: number; y: number; top: number; right: number; ph: number };
     const items: Item[] = [];
     const lanes = new Map<string, [number, number][]>();
     for (const ev of events) {
       const sH = localHours(ev.start);
       const allDay = isAllDay(ev.start, ev.end);
-      const d = dayOf(sH), w = weekOf(d);
-      if (w < w0 || w > w1) continue;
+      const d = dayOf(sH);
+      if (d < d0 || d > d1) continue;
+      const { x: px, y: yTop, w: pw, h: ph } = this.plotOf(d);
       const hod = allDay ? 13 : sH - d * 24;
       const u = uIn(hod);
       const ended = ev.state === 'ended';
       const key = `${d}|${ended ? 1 : 0}`;
       const used = lanes.get(key) ?? [];
       let lane = 0;
-      while (lane < 2 && used.some(([pu, pl]) => pl === lane && Math.abs(pu - u) < 0.14)) lane++;
+      // 挨得近：两面旗的横向距离不到一面旗宽
+      const near = clamp(ph * 0.3, 9, 22) / pw;
+      while (lane < 2 && used.some(([pu, pl]) => pl === lane && Math.abs(pu - u) < near)) lane++;
       used.push([u, lane]);
       lanes.set(key, used);
-      const x = X0 + colOf(d) * Fx + gap + u * pw;
-      const yTop = this.yAt(w + 1) + gap;
+      const x = px + u * pw;
       const y = ended ? yTop + ph * (0.8 - lane * 0.16) : yTop + ph * (0.62 - lane * 0.2);
-      items.push({ ev, h: allDay ? d * 24 + 13 : sH, x, y, top: y, right: X0 + colOf(d) * Fx + gap + pw });
+      items.push({ ev, h: allDay ? d * 24 + 13 : sH, x, y, top: y, right: px + pw, ph });
     }
 
     const labels: Item[] = [];
-    // 标签不压住摊子、车，也不压住今天这块地
+    // 标签不压住日期牌、摊子和车（农夫在 reserved 里）
     const keep: Box[] = [];
     const today = dayOf(nowH);
-    {
-      const ty = this.yAt(weekOf(today) + 1), tx = X0 + colOf(today) * Fx;
-      keep.push({ x0: tx, x1: tx + Fx, y0: ty, y1: ty + RH });
-    }
+    for (let d = d0; d <= d1; d++) keep.push(this.badgeBox(ctx, d, today));
     for (const it of items) {
-      const { ev, x, y } = it;
+      const { ev, x, y, ph } = it;
       const color = FLAG[kindOf(ev)];
       if (ev.state === 'ended' && kindOf(ev) === 'habit') {
         // 浇过的树：地里那滴水就是它，点水滴打开；写了结论在旁边盖小红印
-        const q = Math.max(3, pw * 0.08), wy = this.yAt(weekOf(dayOf(it.h)) + 1) + gap + ph * 0.6;
+        const q = dropSize(ph), wy = this.plotOf(dayOf(it.h)).y + ph * 0.6;
         if (ev.outcome) {
           ctx.fillStyle = rgba(pal.red, 1);
           ctx.fillRect(x + q, wy - q * 1.6, q, q);
@@ -586,13 +598,13 @@ export class FarmWorld implements World {
         this.hits.push({ id: ev.id, x, y: y + 2, w: Math.max(bs * 1.4, 24), h: Math.max(y - top + 6, 24) });
       } else if (ev.state === 'live' && kindOf(ev) === 'meet') {
         // 正在赶集：支起一个摊子，农夫站在旁边（drawFarmer）
-        const ss = stallSize(RH);
-        const top = stall(ctx, x - ss * 0.1, y + ph * 0.2, ss, pal);
-        keep.push({ x0: x - ss * 0.6, x1: x + ss * 0.4, y0: top, y1: y + ph * 0.2 });
+        const ss = stallSize(RH), sx = stallX(x, it.right, RH);
+        const top = stall(ctx, sx, y + ph * 0.2, ss, pal);
+        keep.push({ x0: sx - ss * 0.5, x1: sx + ss * 0.5, y0: top, y1: y + ph * 0.2 });
         it.top = top - 2;
-        this.hits.push({ id: ev.id, x: x - ss * 0.1, y: y + ph * 0.2 + 2, w: Math.max(ss, 24), h: Math.max(ss, 26) });
+        this.hits.push({ id: ev.id, x: sx, y: y + ph * 0.2 + 2, w: Math.max(ss, 24), h: Math.max(ss, 26) });
       } else if (ev.state === 'ended') {
-        const r = clamp(pw * 0.06, 2, 4.5);
+        const r = clamp(ph * 0.06, 2, 5);
         ctx.fillStyle = rgba(mixc(color, pal.ink, light ? 0 : 0.2), ev.outcome ? 1 : 0.7);
         ctx.beginPath(); ctx.arc(x, y - r, r, 0, Math.PI * 2); ctx.fill();
         ctx.strokeStyle = rgba(pal.ink, 0.9); ctx.lineWidth = 1; ctx.stroke();
@@ -638,12 +650,12 @@ export class FarmWorld implements World {
       if (ev.state !== 'live' && Math.abs(it.h - T) < 36) labels.push(it);
     }
 
-    // 标签：离视角近的优先，最多两个，彼此不重叠，也不压住农夫
+    // 标签：离视角近的优先，最多三个，彼此不重叠，也不压住农夫
     labels.sort((a, b) => Math.abs(a.h - T) - Math.abs(b.h - T));
     const taken = [...reserved, ...keep];
     let shown = 0;
     for (const it of labels) {
-      if (shown >= 2) break;
+      if (shown >= 3) break;
       const { ev, x } = it;
       const sub = `${JOB[kindOf(ev)]} · ${subLabel(ev)}`;
       ctx.font = `700 12px ${SANS}`;
@@ -701,7 +713,10 @@ function paintPlot(
   const past = when === 'past';
   const used = [...work.focus, ...work.learn, ...work.meet];
   const free = (x: number) => !used.some(([a, b]) => x > a * pw - 3 && x < b * pw + 3);
-  wobble(g, pw, ph, seed, pw * 0.045);
+  // 纹样的大小跟着地的高走（一长条地很宽，横向的多少按宽算）
+  const k = clamp(ph / 50, 1, 2);
+  const wide = pw / ph;
+  wobble(g, pw, ph, seed, ph * 0.05);
   g.fillStyle = rgba(past ? pal.fallow : pal.bare, 1);
   g.fill();
   g.save();
@@ -709,27 +724,28 @@ function paintPlot(
   const r = rng(seed);
   if (past) {
     // 空着的地长草：人字纹越来越密，过两天开几朵小花
-    const n = Math.round(4 + 10 * smooth(0, 6, age));
+    const n = Math.round((4 + 10 * smooth(0, 6, age)) * wide * 0.8);
     g.strokeStyle = rgba(pal.weed, 1);
-    g.lineWidth = 1.1;
-    const s = pw * 0.05;
+    g.lineWidth = 1.1 * k;
+    const s = ph * 0.05;
     for (let i = 0; i < n; i++) {
       const x = r() * pw, y = ph * 0.22 + r() * ph * 0.74;
       if (!free(x)) continue;
       g.beginPath(); g.moveTo(x - s, y - s * 1.2); g.lineTo(x, y); g.lineTo(x + s, y - s * 1.2); g.stroke();
     }
     if (age > 2) {
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < Math.round(3 * wide * 0.7); i++) {
         const x = r() * pw, y = ph * 0.25 + r() * ph * 0.7;
         if (!free(x)) continue;
         g.fillStyle = i % 2 ? 'rgba(255,255,255,.95)' : light ? 'rgba(240,106,168,1)' : 'rgba(190,96,140,1)';
-        g.beginPath(); g.arc(x, y, Math.max(1.2, pw * 0.032), 0, Math.PI * 2); g.fill();
+        g.beginPath(); g.arc(x, y, Math.max(1.2, ph * 0.032), 0, Math.PI * 2); g.fill();
       }
     }
   } else {
     // 还没动的地：底边一排淡淡的点
     g.fillStyle = 'rgba(255,255,255,.4)';
-    for (let i = 0; i < 9; i++) { g.beginPath(); g.arc(4 + (i * (pw - 8)) / 8, ph - 4, 0.9, 0, Math.PI * 2); g.fill(); }
+    const dots = Math.max(8, Math.round(pw / 12));
+    for (let i = 0; i < dots; i++) { g.beginPath(); g.arc(4 + (i * (pw - 8)) / (dots - 1), ph - 4 * k, 0.9 * k, 0, Math.PI * 2); g.fill(); }
   }
 
   const rows = 6;
@@ -746,9 +762,9 @@ function paintPlot(
     g.fillStyle = rgba(pal.path, 1);
     g.fillRect(sx, 0, w, ph);
     g.strokeStyle = rgba(pal.rut, 1);
-    g.lineWidth = 1.2;
-    g.setLineDash([3, 2]);
-    for (const t of w > 8 ? [0.3, 0.7] : [0.5]) { g.beginPath(); g.moveTo(sx + w * t, 0); g.lineTo(sx + w * t, ph); g.stroke(); }
+    g.lineWidth = 1.2 * k;
+    g.setLineDash([3 * k, 2 * k]);
+    for (const t of w > 8 * k ? [0.3, 0.7] : [0.5]) { g.beginPath(); g.moveTo(sx + w * t, 0); g.lineTo(sx + w * t, ph); g.stroke(); }
     g.setLineDash([]);
     edges(sx, ex);
   }
@@ -763,14 +779,14 @@ function paintPlot(
       const y = rowY(j);
       if (ls === 0) {
         g.fillStyle = rgba(pal.seed, 1);
-        for (let x = sx + 2; x < ex - 1; x += 4) g.fillRect(x, y, 1.4, 1.4);
+        for (let x = sx + 2; x < ex - 1; x += 4 * k) g.fillRect(x, y, 1.4 * k, 1.4 * k);
       } else if (ls <= 2) {
-        leaves(g, sx, ex, y, ls === 1 ? 0.55 : 1, pal);
+        leaves(g, sx, ex, y, (ls === 1 ? 0.55 : 1) * k, k, pal);
       }
     }
     if (ls === 3) {
       // 向日葵：一圈黄花瓣，棕色的心
-      const fr = Math.max(2.4, pw * 0.07);
+      const fr = Math.max(2.4, ph * 0.07);
       for (let j = 0; j < 3; j++) {
         const y = ph * 0.32 + j * ph * 0.24;
         for (let x = sx + fr + 1 + (j % 2) * fr; x < ex - fr * 0.6; x += fr * 2.6) {
@@ -799,15 +815,16 @@ function paintPlot(
       if (tilled) {
         const dot = st === 0;
         g.fillStyle = rgba(dot ? pal.seed : pal.furrow, 1);
-        for (let x = sx + 2; x < ex - 1; x += 4) g.fillRect(x, y, dot ? 1.4 : 2.4, dot ? 1.4 : 1.3);
+        for (let x = sx + 2; x < ex - 1; x += 4 * k) g.fillRect(x, y, (dot ? 1.4 : 2.4) * k, (dot ? 1.4 : 1.3) * k);
       } else if (st <= 2) {
-        leaves(g, sx, ex, y, st === 1 ? 0.6 : 1, pal);
+        leaves(g, sx, ex, y, (st === 1 ? 0.6 : 1) * k, k, pal);
       } else {
         // 穗子：一排排人字
         g.strokeStyle = rgba(pal.ear, 1);
-        g.lineWidth = 1;
-        for (let x = sx + 2.5; x < ex - 1; x += 4.5) {
-          g.beginPath(); g.moveTo(x - 1.6, y + 1.6); g.lineTo(x, y); g.lineTo(x + 1.6, y + 1.6); g.stroke();
+        g.lineWidth = k;
+        const e = 1.6 * k;
+        for (let x = sx + 2.5; x < ex - 1; x += 4.5 * k) {
+          g.beginPath(); g.moveTo(x - e, y + e); g.lineTo(x, y); g.lineTo(x + e, y + e); g.stroke();
         }
       }
     }
@@ -816,7 +833,7 @@ function paintPlot(
 
   // 浇树：习惯一般很短，不占一条地，只在那个钟点留一滴水
   for (const [a, b] of work.habit) {
-    const x = ((a + b) / 2) * pw, y = ph * 0.6, q = Math.max(3, pw * 0.08);
+    const x = ((a + b) / 2) * pw, y = ph * 0.6, q = dropSize(ph);
     g.fillStyle = rgba(mixc(pal.water, [255, 255, 255], 0.35), 1);
     g.beginPath(); g.ellipse(x, y + q * 1.1, q * 1.1, q * 0.35, 0, 0, Math.PI * 2); g.fill();
     g.beginPath();
@@ -829,21 +846,17 @@ function paintPlot(
   }
   g.restore();
 
-  wobble(g, pw, ph, seed, pw * 0.045);
+  wobble(g, pw, ph, seed, ph * 0.05);
   g.strokeStyle = ink;
-  g.lineWidth = clamp(pw * 0.035, 1.2, 2);
+  g.lineWidth = clamp(ph * 0.03, 1.4, 2.4);
   g.stroke();
 
-  // 日子：左上角一块小圆牌，今天是红的；一号写月份
-  const date = new Date(noonOf(d));
-  const text = date.getDate() === 1 ? `${date.getMonth() + 1}月` : String(date.getDate());
-  const br = clamp(pw * 0.14, 6.5, 10);
-  const fs = br * (text.length > 2 ? 0.95 : 1.15);
-  g.font = `700 ${fs}px ${SANS}`;
-  const tw = Math.max(br * 2, g.measureText(text).width + br * 0.8);
+  // 日子：左上角一块小牌子写几月几日周几，今天是红牌、前面加“今天”
+  const today = when === 'today';
+  const text = dayText(d, today);
+  const { br, tw } = badgeSize(g, text, ph);
   g.beginPath();
   if (g.roundRect) g.roundRect(2, 2, tw, br * 2, br); else g.rect(2, 2, tw, br * 2);
-  const today = when === 'today';
   g.fillStyle = today ? rgba(pal.red, 1) : rgba(pal.badge, 1);
   g.fill();
   g.lineWidth = 1;
@@ -855,10 +868,10 @@ function paintPlot(
   g.fillText(text, 2 + tw / 2, 2 + br + 0.5);
 }
 
-/** 一排成对的叶子（芽和苗） */
-function leaves(g: CanvasRenderingContext2D, sx: number, ex: number, y: number, k: number, pal: Pal) {
+/** 一排成对的叶子（芽和苗）。k：叶子多大；step：间距按多大算 */
+function leaves(g: CanvasRenderingContext2D, sx: number, ex: number, y: number, k: number, step: number, pal: Pal) {
   g.fillStyle = rgba(pal.leaf, 1);
-  for (let x = sx + 2.5; x < ex - 1; x += 5) {
+  for (let x = sx + 2.5; x < ex - 1; x += 5 * step) {
     g.beginPath();
     g.ellipse(x - 1.2 * k, y, 1.8 * k, 0.9 * k, -0.6, 0, Math.PI * 2);
     g.ellipse(x + 1.2 * k, y, 1.8 * k, 0.9 * k, 0.6, 0, Math.PI * 2);
@@ -949,9 +962,43 @@ function haystack(ctx: CanvasRenderingContext2D, x: number, y: number, s: number
   }
 }
 
+/** 日期牌上的字 */
+function dayText(d: number, today: boolean): string {
+  const date = new Date(noonOf(d));
+  return `${today ? '今天 · ' : ''}${date.getMonth() + 1}月${date.getDate()}日 ${WEEKDAYS[date.getDay()]}`;
+}
+
+/** 日期牌的半高和宽（会顺手把字体设好） */
+function badgeSize(g: CanvasRenderingContext2D, text: string, ph: number) {
+  const br = clamp(ph * 0.1, 7, 10);
+  g.font = `700 ${br * 1.15}px ${SANS}`;
+  return { br, tw: Math.max(br * 2, g.measureText(text).width + br * 0.8) };
+}
+
+/** 浇树留下的那滴水多大 */
+const dropSize = (ph: number) => Math.max(3, ph * 0.08);
+
+/** 周一和周日之间的一排小灌木：圆圆的，点几个浅绿点 */
+function hedge(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, gap: number, pal: Pal) {
+  const r = gap * 0.85, n = Math.floor(w / (r * 2.6));
+  ctx.lineWidth = 1.1;
+  ctx.strokeStyle = rgba(pal.ink, 1);
+  for (let i = 0; i < n; i++) {
+    const cx = x + (i + 0.5) * (w / n);
+    ctx.fillStyle = rgba(pal.crown, 1);
+    ctx.beginPath(); ctx.arc(cx, y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = rgba(pal.dot, 1);
+    ctx.beginPath(); ctx.arc(cx - r * 0.3, y - r * 0.25, r * 0.22, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
 /** 车、摊子的大小（跟着一行的高） */
 const cartSize = (rh: number) => clamp(rh * 0.36, 11, 24);
 const stallSize = (rh: number) => clamp(rh * 0.85, 24, 56);
+/** 地里的农夫多高 */
+const farmerSize = (rh: number) => clamp(rh * 0.62, 30, 66);
+/** 摊子的中间：开会那个钟点稍靠左；夜里的会挤在地的右头，要给摊子和站在右边的农夫留出地方 */
+const stallX = (x: number, right: number, rh: number) => Math.min(x - stallSize(rh) * 0.1, right - stallSize(rh) * 0.5 - farmerSize(rh) * 0.45);
 
 /**
  * 独轮车：木车斗、一个轮子、车把。车斗上码箱子（三只一层）：先是装好的 loaded 只，
