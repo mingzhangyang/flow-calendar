@@ -170,7 +170,13 @@ export class FarmWorld implements World {
       marketH -= (marketH - MARKET_MIN) * t; orchardH -= (orchardH - ORCHARD_MIN) * t;
       need -= slack * t;
       const fromSky = clamp(need, 0, sky - 64); sky -= fromSky; need -= fromSky;
-      vil -= clamp(need, 0, vil - 56);
+      const fromVillage = clamp(need, 0, vil - 56); vil -= fromVillage; need -= fromVillage;
+    }
+    // 极矮屏幕把其余分区也按比例收缩，给田垄保留完整高度。
+    if (need > 0) {
+      const bands = sky + vil + marketH + orchardH;
+      const scale = bands > 0 ? clamp((bands - need) / bands, 0, 1) : 0;
+      sky *= scale; vil *= scale; marketH *= scale; orchardH *= scale;
     }
     this.SKY = insets.top + sky;
     this.VIL = h - insets.bottom - vil;
@@ -179,8 +185,8 @@ export class FarmWorld implements World {
     this.mBottom = this.oTop;
     this.mTop = this.mBottom - marketH;
     this.fieldTop = this.SKY + 38;
-    // 再矮也不让田的上下沿颠倒（那样一垄的高度是零或负的）；挤不下时集市压在田头上
-    this.fieldBottom = Math.max(this.mTop - this.headH, this.fieldTop + 8 + ROWS);
+    // 即使挤屏，仍为 15 垄各留至少 5px；极矮时由上面的紧凑布局收缩其他分区。
+    this.fieldBottom = Math.max(this.mTop - this.headH, this.fieldTop + FIELD_MIN);
     this.rows.clear();
   }
 
@@ -200,7 +206,7 @@ export class FarmWorld implements World {
     this.today = dayOf(nowH);
     // 视角在哪天：今天是整数，拖多少小时就滚多少垄
     this.V = this.today + (T - nowH) / 24;
-    this.segs = segments(f.events, nowH);
+    this.segs = segments(f.events, f.now);
     this.orchard = orchardOf(f.events, f.now);
     this.stepOverview();
     this.harvest = this.measure(f.events, nowH);
@@ -611,9 +617,11 @@ export class FarmWorld implements World {
     const h = this.harvest;
     if (a < 0.01 || !h) return;
     const top = this.mTop, bottom = this.oBottom;
-    const gs = clamp((bottom - top) * 0.6, 80, 150);
-    const total = gs * 0.75 + 16 + 230;
-    const gx = (this.W - total) / 2 + gs * 0.35, ground = top + (bottom - top) * 0.5 + gs * 0.45;
+    // 按粮仓屋檐和右侧说明牌的真实边界缩放，窄屏也留出边距。
+    const maxGs = Math.max(0, (this.W - 16 - 254) / 0.72);
+    const gs = Math.min(clamp((bottom - top) * 0.6, 80, 150), maxGs);
+    const total = gs * 0.72 + 254;
+    const gx = (this.W - total) / 2 + gs * 0.32 + 8, ground = top + (bottom - top) * 0.5 + gs * 0.45;
     ctx.save();
     ctx.globalAlpha = a;
     bigGranary(ctx, gx, ground, gs, h.fill, pal);
@@ -681,8 +689,9 @@ export class FarmWorld implements World {
       ctx.restore();
       return;
     }
-    const title = `现在 · ${live.title}`;
-    const sub = `${JOB[kindOf(live)]} · ${subLabel(live)}`;
+    const maxTextWidth = Math.max(0, W - 24);
+    const title = fitText(ctx, `现在 · ${live.title}`, maxTextWidth, `700 13px ${SANS}`);
+    const sub = fitText(ctx, `${JOB[kindOf(live)]} · ${subLabel(live)}`, maxTextWidth, `500 12px ${SANS}`);
     const ty = Math.max(this.SKY + 40, y - s - 8);
     ctx.save();
     ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
@@ -710,7 +719,8 @@ export class FarmWorld implements World {
     ctx.fillStyle = rgba(skyAt(hod), 1);
     ctx.fillRect(0, 0, W, SKY);
     const night = 1 - daylight;
-    const top = this.insetTop + 52, band = SKY - top;
+    const top = Math.min(this.insetTop + 52, Math.max(this.insetTop, SKY - 16));
+    const band = Math.max(0, SKY - top);
 
     // 星星：一些固定的小点，入夜才出来
     if (night > 0.05) {
@@ -929,17 +939,25 @@ function roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number,
  * 每块田每天的那一垄：专注、学习的日程按天拆开（跨午夜的分到两天，全天日程不算），
  * 同一天按开始时间排好，叠在前面日程上的部分不重复算；做了多少按“现在”量。
  */
-function segments(events: EventView[], nowH: number): Map<string, Seg[]> {
+function segments(events: EventView[], now: number): Map<string, Seg[]> {
   const raw = new Map<string, { ev: EventView; a: number; b: number }[]>();
   for (const ev of events) {
     const kind = kindOf(ev);
-    if ((kind !== 'focus' && kind !== 'learn') || isAllDay(ev.start, ev.end)) continue;
-    const s = localHours(ev.start), e = localHours(ev.end);
-    for (let d = dayOf(s); d * 24 < e; d++) {
+    if ((kind !== 'focus' && kind !== 'learn') || isAllDay(ev.start, ev.end)
+      || !Number.isFinite(ev.start) || !Number.isFinite(ev.end) || ev.end <= ev.start) continue;
+    // 用本地日历午夜切段，但每段端点始终保留真实时间戳。
+    let eventCursor = ev.start;
+    while (eventCursor < ev.end) {
+      const date = new Date(eventCursor);
+      const nextDay = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1).getTime();
+      const end = Math.min(ev.end, nextDay);
+      if (!(end > eventCursor)) break;
+      const d = dayOf(localHours(eventCursor));
       const key = `${kind}|${d}`;
       let list = raw.get(key);
       if (!list) raw.set(key, (list = []));
-      list.push({ ev, a: Math.max(s, d * 24), b: Math.min(e, (d + 1) * 24) });
+      list.push({ ev, a: eventCursor, b: end });
+      eventCursor = end;
     }
   }
   const out = new Map<string, Seg[]>();
@@ -949,10 +967,11 @@ function segments(events: EventView[], nowH: number): Map<string, Seg[]> {
     const segs: Seg[] = [];
     for (const { ev, a, b } of list) {
       const from = Math.max(a, cursor);
-      const hours = Math.max(0, b - from);
+      const elapsed = Math.max(0, b - from);
       cursor = Math.max(cursor, b);
-      if (hours < 1 / 60) continue;
-      segs.push({ ev, hours, done: clamp(nowH - from, 0, hours) });
+      if (elapsed < MINUTE) continue;
+      const hours = elapsed / HOUR;
+      segs.push({ ev, hours, done: clamp((Math.min(now, b) - from) / HOUR, 0, hours) });
     }
     if (segs.length) out.set(key, segs);
   }
