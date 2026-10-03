@@ -37,6 +37,8 @@ const FULL = 8;
 const ROWS = 15, OV_ROWS = 35;
 /** 回望的过渡要多久（秒） */
 const OV_SEC = 0.8;
+/** 屏幕矮时：田至少多高（一垄 5 像素），集市、果园最少收到多高 */
+const FIELD_MIN = ROWS * 5 + 8, MARKET_MIN = 56, ORCHARD_MIN = 64;
 /** 粮仓装满要耕多少小时地（五周、每天两三小时） */
 const GRANARY_FULL = 80;
 
@@ -94,6 +96,7 @@ function skyAt(hod: number): RGB {
 }
 
 
+/** 能点的东西：x 是中线，y 是下沿 */
 interface Hit { id: string; x: number; y: number; w: number; h: number }
 /** 种在田里的两类：麦田是专注，菜园是学习 */
 type FieldKind = 'focus' | 'learn';
@@ -153,19 +156,31 @@ export class FarmWorld implements World {
   resize(w: number, h: number, insets: { top: number; bottom: number }) {
     this.W = w; this.H = h;
     this.insetTop = insets.top; this.insetBottom = insets.bottom;
-    this.SKY = insets.top + clamp(h * 0.13, 90, 130);
-    this.VIL = h - insets.bottom - clamp(h * 0.09, 60, 90);
+    let sky = clamp(h * 0.13, 90, 130), vil = clamp(h * 0.09, 60, 90);
     this.FW = Math.min(w - 24, 760);
     this.X0 = (w - this.FW) / 2;
-    const room = this.VIL - this.SKY;
+    const room = h - insets.top - insets.bottom - sky - vil;
     this.headH = 26;
-    const marketH = clamp(room * 0.2, 96, 140), orchardH = clamp(room * 0.24, 120, 170);
+    let marketH = clamp(room * 0.2, 96, 140), orchardH = clamp(room * 0.24, 120, 170);
+    // 横屏手机、很矮的窗口：先保住田（一垄至少 5 像素），从集市、果园收起，不够再收天和村子
+    let need = FIELD_MIN - (room - 4 - marketH - orchardH - this.headH - 38);
+    if (need > 0) {
+      const slack = marketH - MARKET_MIN + orchardH - ORCHARD_MIN;
+      const t = Math.min(1, need / slack);
+      marketH -= (marketH - MARKET_MIN) * t; orchardH -= (orchardH - ORCHARD_MIN) * t;
+      need -= slack * t;
+      const fromSky = clamp(need, 0, sky - 64); sky -= fromSky; need -= fromSky;
+      vil -= clamp(need, 0, vil - 56);
+    }
+    this.SKY = insets.top + sky;
+    this.VIL = h - insets.bottom - vil;
     this.oBottom = this.VIL - 4;
     this.oTop = this.oBottom - orchardH;
     this.mBottom = this.oTop;
     this.mTop = this.mBottom - marketH;
-    this.fieldBottom = this.mTop - this.headH;
     this.fieldTop = this.SKY + 38;
+    // 再矮也不让田的上下沿颠倒（那样一垄的高度是零或负的）；挤不下时集市压在田头上
+    this.fieldBottom = Math.max(this.mTop - this.headH, this.fieldTop + 8 + ROWS);
     this.rows.clear();
   }
 
@@ -207,7 +222,7 @@ export class FarmWorld implements World {
       ctx.globalAlpha = fade;
       this.drawHeads(ctx, f.events, nowH, pal, light);
       this.drawMarket(ctx, f.events, f.now, live, pal, light);
-      this.drawOrchard(ctx, pal, light);
+      this.drawOrchard(ctx, live, pal, light);
       ctx.restore();
     }
     this.drawVillage(ctx, pal, daylight);
@@ -231,9 +246,14 @@ export class FarmWorld implements World {
   }
 
   hitTest(x: number, y: number): string | null {
-    for (let i = this.hits.length - 1; i >= 0; i--) {
-      const h = this.hits[i];
-      if (Math.abs(x - h.x) <= h.w / 2 && y <= h.y + 4 && y >= h.y - h.h) return h.id;
+    // 先找正好点中的（垄很窄时，相邻的垄、相邻的短日程不会抢）；没有再放宽到至少 16×18、下边多 4
+    for (const loose of [false, true]) {
+      for (let i = this.hits.length - 1; i >= 0; i--) {
+        const h = this.hits[i];
+        const w = loose ? Math.max(h.w, 16) : h.w, hh = loose ? Math.max(h.h, 18) : h.h;
+        const bottom = h.y - (h.h - hh) / 2 + (loose ? 4 : 0);
+        if (Math.abs(x - h.x) <= w / 2 && y <= bottom && y >= bottom - hh - (loose ? 4 : 0)) return h.id;
+      }
     }
     return null;
   }
@@ -365,6 +385,7 @@ export class FarmWorld implements World {
     sign(ctx, x + 8, top - 24, kind === 'focus' ? '麦田 · 专注' : '菜园 · 学习', pal);
 
     const rh = this.rowH();
+    if (!(rh > 0) || !Number.isFinite(rh)) return;
     const baseRh = (bottom - top - 8) / (this.e < 1 ? ROWS : OV_ROWS);
     const front = bottom - 4, rx = x + 6, rw = w - 12;
     ctx.save();
@@ -379,13 +400,14 @@ export class FarmWorld implements World {
       const age = (nowH - (d + 1) * 24) / 24;
       const c = this.rowCanvas(kind, d, segs, when, age, rw, baseRh, pal, daylight, dpr);
       ctx.drawImage(c, rx, yT, rw, rh);
-      // 点一段打开那个日程（回望时不点）
-      if (this.e === 0 && segs.length) {
+      // 点一段打开那个日程（回望时不点）。只算田框里露出来的那截，滚出去的垄不能点
+      const vT = Math.max(yT, top + 4), vB = Math.min(yB, bottom - 4);
+      if (this.e === 0 && segs.length && vB > vT) {
         const scale = rw / Math.max(FULL, segs.reduce((n, s) => n + s.hours, 0));
         let cx = rx;
         for (const s of segs) {
           const sw = s.hours * scale;
-          this.hits.push({ id: s.ev.id, x: cx + sw / 2, y: yB, w: Math.max(sw, 16), h: Math.max(rh, 18) });
+          this.hits.push({ id: s.ev.id, x: cx + sw / 2, y: vB, w: sw, h: vB - vT });
           cx += sw;
         }
       }
@@ -458,7 +480,7 @@ export class FarmWorld implements World {
     const { X0, FW, W } = this;
     const top = this.mTop, bottom = this.mBottom;
     sign(ctx, X0 + 8, top + 4, '集市 · 会议', pal);
-    const ry = top + 30, rh = clamp((bottom - top) * 0.36, 34, 50);
+    const ry = top + clamp((bottom - top) * 0.46, 24, 30), rh = clamp((bottom - top) * 0.36, 20, 50);
     ctx.fillStyle = rgba(pal.path, 1);
     ctx.fillRect(0, ry, W, rh);
     ctx.fillStyle = rgba(pal.ink, 1);
@@ -481,7 +503,7 @@ export class FarmWorld implements World {
     const next = events
       .filter(e => (e.state === 'future' || e.state === 'soon') && kindOf(e) === 'meet' && e.start - now < 36 * HOUR)
       .sort((a, b) => a.start - b.start)[0];
-    const below = ry + rh + 13;
+    const below = ry + rh + Math.min(13, bottom - ry - rh - 2);
     if (next) {
       const cs = clamp(rh * 0.62, 18, 30), cx = X0 + 14 + cs * 0.55;
       const prep = next.prep ?? [], n = prep.filter(p => p.done).length;
@@ -504,33 +526,58 @@ export class FarmWorld implements World {
 
   /* ---------- 果园 ---------- */
 
-  /** 果园：每种习惯一棵树，树下写名字；还没有习惯时写一句提示 */
-  private drawOrchard(ctx: CanvasRenderingContext2D, pal: Pal, light: boolean) {
+  /**
+   * 果园：每种习惯一棵树，树下写名字；还没有习惯时写一句提示。
+   * 树多了先把树缩小（最小 28）排下；还排不下，最后一个位置写“还有 N 种”，正在做的那棵总留在园里。
+   */
+  private drawOrchard(ctx: CanvasRenderingContext2D, live: EventView | undefined, pal: Pal, light: boolean) {
     const { X0, FW } = this;
-    sign(ctx, X0 + 8, this.oTop + 4, '果园 · 习惯', pal);
+    const signW = sign(ctx, X0 + 8, this.oTop + 4, '果园 · 习惯', pal);
     const ground = this.oBottom - 22;
     this.orchardGround = ground;
     this.treeSpot.clear();
-    const s = clamp(this.oBottom - this.oTop - 50, 60, 104);
+    let s = clamp(this.oBottom - this.oTop - 50, 24, 104);
     if (!this.orchard.length) {
       small(ctx, X0 + FW / 2, ground - s * 0.4, '有了跑步、冥想这样的习惯，这里就种一棵树', 'center', pal, light);
       return;
     }
-    let x = X0 + s * 0.5;
-    for (const o of this.orchard) {
-      if (x > X0 + FW - s * 0.35) break;
+    // 第一棵树从哪儿起（树梢碰到木牌时，从木牌右边起）；树隔多远（至少 40，好写下两个字的名字），一排能种几棵
+    const lead = (size: number) => (ground - size < this.oTop + 26 ? 8 + signW + 6 : 0) + size * 0.5;
+    const room = (size: number) => FW - lead(size) - size * 0.35;
+    const gap = (size: number) => Math.max(size * 0.95, 40);
+    const fits = (size: number) => Math.max(1, Math.floor(room(size) / gap(size)) + 1);
+    const n = this.orchard.length;
+    // 排不下先缩树，缩到 42（再小，间隔也是 40，不能多种）
+    while (s > 42 && fits(s) < n) s -= 1;
+    let pitch = gap(s);
+    // 矮屏上树小、地宽：把树摊开些，名字能多写几个字
+    if (n > 1 && pitch < 64) pitch = clamp(room(s) / (n - 1), pitch, 64);
+    let shown = this.orchard;
+    if (fits(s) < n) {
+      // 右头留出写“还有 N 种”的地方
+      ctx.font = `700 11px ${SANS}`;
+      const textW = ctx.measureText(`还有 ${n} 种`).width + 4;
+      const m = Math.max(1, Math.floor((room(s) + s * 0.05 - textW) / pitch) + 1);
+      shown = this.orchard.slice(0, m);
+      const liveTitle = live && kindOf(live) === 'habit' ? live.title.trim() : null;
+      const liveTree = liveTitle && !shown.some(o => o.title === liveTitle) && this.orchard.find(o => o.title === liveTitle);
+      if (liveTree) shown = [...shown.slice(0, -1), liveTree];
+    }
+    let x = X0 + lead(s);
+    for (const o of shown) {
       fruitTree(ctx, x, ground, s, o.stage, pal);
       ctx.font = `700 11px ${SANS}`;
-      const name = fitText(ctx, o.title, s * 0.9, `700 11px ${SANS}`);
+      const name = fitText(ctx, o.title, Math.min(s * 0.9, pitch - 18), `700 11px ${SANS}`);
       const tw = ctx.measureText(name).width + 12;
       tag(ctx, x - tw / 2, ground + 3, tw, 17, light ? [255, 248, 232] : [40, 30, 60], pal);
       ctx.fillStyle = light ? rgba(pal.ink, 1) : 'rgba(255,236,190,1)';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(name, x, ground + 12);
       this.treeSpot.set(o.title, x);
-      this.hits.push({ id: o.id, x, y: ground + 20, w: s * 0.7, h: s + 20 });
-      x += s * 0.95;
+      this.hits.push({ id: o.id, x, y: ground + 20, w: Math.min(Math.max(s * 0.7, tw), pitch), h: s + 20 });
+      x += pitch;
     }
+    if (shown.length < n) small(ctx, x - pitch + s * 0.3 + 4, ground - s * 0.35, `还有 ${n - shown.length} 种`, 'left', pal, light);
   }
 
   /* ---------- 村子 ---------- */
@@ -970,6 +1017,7 @@ function sign(ctx: CanvasRenderingContext2D, x: number, y: number, text: string,
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
   ctx.fillText(text, x + 7, y + 7.5);
   ctx.restore();
+  return w;
 }
 
 /** 垄右头的日子小牌（右边对齐到 x）：今天是红的 */
