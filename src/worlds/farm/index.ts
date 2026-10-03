@@ -15,7 +15,8 @@ import { subLabel } from '../climb';
  * 做过的事留在地里，按类型（kind.ts）是不同的农活，都只算已经过去的时段：
  *   专注 = 耕地：翻成垄，过几天冒芽、长成青苗，两周左右熟成金黄；
  *   学习 = 播种：撒下种子，两周后才冒芽，三周多开出向日葵；
- *   会议 = 赶集：地没动，压出一条车道；
+ *   会议 = 赶集：地没动，压出一条车道。会前小旗边停一辆车，准备事项是车上的木箱，勾掉的装好、没勾的还空着一个虚框；
+ *            开会时地里支起集市的摊子，农夫站在摊边；会后写了结论，就留一篮带回来的货（几行结论几样货）；
  *   习惯 = 浇果树：地里留一滴水，村子里那棵树（每种习惯一棵）按近两个月浇过几次长大、开花、结果。
  * 没做事的日子，地空着长草开花。还没到的日程是插在地里的小旗（颜色按类型）。
  * 农夫在今天的地里随钟点走，按手上的农活锄地、撒种、提水，夜里回家坐在门口。
@@ -176,11 +177,13 @@ export class FarmWorld implements World {
 
     this.hits = [];
     const live = f.events.find(e => e.state === 'live' && !isAllDay(e.start, e.end));
-    const reserved = this.drawFarmer(ctx, f, nowH, live, pal, light);
+    // 农夫最后画，站在小旗和车的前面；他占的地方先量好，标签让开
+    const reserved = this.drawFarmer(ctx, f, nowH, live, pal, light, false);
     ctx.save();
     ctx.beginPath(); ctx.rect(0, this.SKY, W, this.VIL - this.SKY); ctx.clip();
-    this.drawEvents(ctx, f.events, T, pal, light, reserved);
+    this.drawEvents(ctx, f.events, T, nowH, pal, light, reserved);
     ctx.restore();
+    this.drawFarmer(ctx, f, nowH, live, pal, light, true);
   }
 
   dragHours(_x: number, _y: number, _dx: number, dy: number): number {
@@ -213,6 +216,11 @@ export class FarmWorld implements World {
     };
     let text = `一天是一块地，一周一行，往上是以后的日子。这周耕地约 ${hours('focus')} 小时，播种约 ${hours('learn')} 小时。`
       + '专注是耕地，两周左右熟成金黄；学习是播种，两周后才发芽；会议是赶集；习惯是浇果树。没做事的日子，地空着长草。';
+    const trip = f.events.find(e => e.state !== 'ended' && kindOf(e) === 'meet' && e.prep?.length);
+    if (trip) {
+      const done = trip.prep!.filter(p => p.done).length, left = trip.prep!.length - done;
+      text += `下次赶集：${trip.title}，车上装了 ${done} 样${left ? `，还有 ${left} 样没装` : '，都装好了'}。`;
+    }
     if (this.orchard.length) text += `果园里：${this.orchard.map(o => `${o.title}（${TREE_NAMES[o.stage]}）`).join('、')}。`;
     return text;
   }
@@ -451,30 +459,41 @@ export class FarmWorld implements World {
 
   /* ---------- 农夫 ---------- */
 
-  /** 白天在今天的地里随钟点走（忙时锄地），夜里回家坐在门口；返回他和头顶文字占掉的地方 */
-  private drawFarmer(ctx: CanvasRenderingContext2D, f: Frame, nowH: number, live: EventView | undefined, pal: Pal, light: boolean): Box[] {
+  /**
+   * 白天在今天的地里随钟点走（按手上的农活换动作，赶集时站在摊边），夜里回家坐在门口。
+   * 返回他和头顶文字占掉的地方；paint 为 false 时只量不画（先量好让标签让开，最后再画到最前面）
+   */
+  private drawFarmer(ctx: CanvasRenderingContext2D, f: Frame, nowH: number, live: EventView | undefined, pal: Pal, light: boolean, paint: boolean): Box[] {
     const { W, Fx, X0, RH } = this;
     const d = dayOf(nowH), hod = nowH - d * 24;
     const home = (hod >= DAY1 || hod < DAY0) && !live;
     let x: number, y: number, s: number;
+    /** 头顶的字牌要高过什么：农夫自己，赶集时还有摊子 */
+    let head: number;
     if (home) {
       s = clamp((this.H - this.VIL) * 0.55, 34, 60);
       x = this.house.x + this.house.w * 0.78; y = this.house.ground;
-      folkFarmer(ctx, x, y, s, 'sit', pal);
+      if (paint) folkFarmer(ctx, x, y, s, 'sit', pal);
+      head = s;
     } else {
       const w = weekOf(d), col = colOf(d);
-      const gap = Fx * 0.07;
-      x = X0 + col * Fx + gap + uIn(hod) * (Fx - 2 * gap);
+      const gap = Fx * 0.07, pw = Fx - 2 * gap;
+      x = X0 + col * Fx + gap + uIn(hod) * pw;
       y = this.yAt(w) - RH * 0.16;
       if (y < this.SKY + 10 || y > this.VIL) return [];
       s = clamp(RH * 0.8, 30, 70);
-      const pose = !live ? 'walk' : ({ focus: 'hoe', learn: 'sow', habit: 'water', meet: 'walk' } as const)[kindOf(live)];
-      folkFarmer(ctx, x, y, s, pose, pal);
+      const kind = live ? kindOf(live) : null;
+      const market = kind === 'meet' && dayOf(localHours(live!.start)) === d;
+      // 赶集：站在摊子右边，不出今天这块地（夜里的会挤在地的右头）
+      if (market) x = Math.min(X0 + col * Fx + gap + uIn(localHours(live!.start) - d * 24) * pw + stallSize(RH) * 0.4, X0 + col * Fx + gap + pw * 0.92);
+      const pose = !kind ? 'walk' : ({ focus: 'hoe', learn: 'sow', habit: 'water', meet: 'walk' } as const)[kind];
+      if (paint) folkFarmer(ctx, x, y, s, pose, pal);
+      head = market ? Math.max(s, stallSize(RH)) : s;
     }
     // 头顶两行字：“现在”和钟点；忙着的时候换成日程的名字和还要准备几项
     const title = live ? `现在 · ${live.title}` : home ? '现在 · 在家歇着' : '现在';
     const sub = live ? `${JOB[kindOf(live)]} · ${subLabel(live)}` : `${fmtDay(f.now)} ${fmtTime(f.now)}`;
-    const ty = Math.max(this.SKY + 34, y - s - 6);
+    const ty = Math.max(this.SKY + 34, y - head - 6);
     ctx.save();
     ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
     ctx.font = `700 13px ${SANS}`;
@@ -483,6 +502,11 @@ export class FarmWorld implements World {
     const w2 = ctx.measureText(sub).width;
     const half = Math.max(w1, w2) / 2 + 6;
     const tx = clamp(x, half + 4, W - half - 4);
+    const boxes = [
+      { x0: tx - half, x1: tx + half, y0: ty - 34, y1: ty + 2 },
+      { x0: x - s * 0.4, x1: x + s * 0.6, y0: y - s, y1: y + 4 },
+    ];
+    if (!paint) { ctx.restore(); return boxes; }
     // 农民画里的字写在一块小牌子上
     tag(ctx, tx - half, ty - 33, half * 2, 35, light ? [255, 248, 232] : [40, 30, 60], pal);
     ctx.fillStyle = light ? rgba(pal.red, 1) : 'rgba(255,236,190,1)';
@@ -492,10 +516,7 @@ export class FarmWorld implements World {
     ctx.fillStyle = light ? rgba(pal.ink, 0.8) : 'rgba(255,236,190,.8)';
     ctx.fillText(sub, tx, ty);
     ctx.restore();
-    return [
-      { x0: tx - half, x1: tx + half, y0: ty - 34, y1: ty + 2 },
-      { x0: x - s * 0.4, x1: x + s * 0.6, y0: y - s, y1: y + 4 },
-    ];
+    return boxes;
   }
 
   /* ---------- 日程 ---------- */
@@ -504,11 +525,11 @@ export class FarmWorld implements World {
    * 还没做的日程是插在地里的小旗（按开始的钟点排开，挨得近的错开），进行中的旗外画一圈红；
    * 做完的在地的下半截留一颗彩珠，写了结论的旁边盖一方小红印。
    */
-  private drawEvents(ctx: CanvasRenderingContext2D, events: EventView[], T: number, pal: Pal, light: boolean, reserved: Box[]) {
+  private drawEvents(ctx: CanvasRenderingContext2D, events: EventView[], T: number, nowH: number, pal: Pal, light: boolean, reserved: Box[]) {
     const { Fx, RH, X0, W } = this;
     const [w0, w1] = this.visibleRows();
     const gap = Fx * 0.07, pw = Fx - 2 * gap, ph = RH - 2 * gap;
-    type Item = { ev: EventView; h: number; x: number; y: number; top: number };
+    type Item = { ev: EventView; h: number; x: number; y: number; top: number; right: number };
     const items: Item[] = [];
     const lanes = new Map<string, [number, number][]>();
     for (const ev of events) {
@@ -528,10 +549,17 @@ export class FarmWorld implements World {
       const x = X0 + colOf(d) * Fx + gap + u * pw;
       const yTop = this.yAt(w + 1) + gap;
       const y = ended ? yTop + ph * (0.8 - lane * 0.16) : yTop + ph * (0.62 - lane * 0.2);
-      items.push({ ev, h: allDay ? d * 24 + 13 : sH, x, y, top: y });
+      items.push({ ev, h: allDay ? d * 24 + 13 : sH, x, y, top: y, right: X0 + colOf(d) * Fx + gap + pw });
     }
 
     const labels: Item[] = [];
+    // 标签不压住摊子、车，也不压住今天这块地
+    const keep: Box[] = [];
+    const today = dayOf(nowH);
+    {
+      const ty = this.yAt(weekOf(today) + 1), tx = X0 + colOf(today) * Fx;
+      keep.push({ x0: tx, x1: tx + Fx, y0: ty, y1: ty + RH });
+    }
     for (const it of items) {
       const { ev, x, y } = it;
       const color = FLAG[kindOf(ev)];
@@ -545,6 +573,24 @@ export class FarmWorld implements World {
         }
         it.top = wy - q * 1.6;
         this.hits.push({ id: ev.id, x, y: wy + q * 1.4, w: 24, h: 26 });
+      } else if (ev.state === 'ended' && kindOf(ev) === 'meet' && ev.outcome) {
+        // 赶集回来：一篮换回来的货，结论有几行就几样；旁边盖小红印
+        const bs = cartSize(RH) * 0.75;
+        const goods = Math.min(4, ev.outcome.split('\n').filter(l => l.trim()).length || 1);
+        const top = basket(ctx, x, y, bs, goods, pal);
+        const q = bs * 0.22;
+        ctx.fillStyle = rgba(pal.red, 1);
+        ctx.fillRect(x + bs * 0.55, top, q, q);
+        ctx.strokeStyle = rgba(pal.ink, 1); ctx.lineWidth = 1; ctx.strokeRect(x + bs * 0.55, top, q, q);
+        it.top = top - 2;
+        this.hits.push({ id: ev.id, x, y: y + 2, w: Math.max(bs * 1.4, 24), h: Math.max(y - top + 6, 24) });
+      } else if (ev.state === 'live' && kindOf(ev) === 'meet') {
+        // 正在赶集：支起一个摊子，农夫站在旁边（drawFarmer）
+        const ss = stallSize(RH);
+        const top = stall(ctx, x - ss * 0.1, y + ph * 0.2, ss, pal);
+        keep.push({ x0: x - ss * 0.6, x1: x + ss * 0.4, y0: top, y1: y + ph * 0.2 });
+        it.top = top - 2;
+        this.hits.push({ id: ev.id, x: x - ss * 0.1, y: y + ph * 0.2 + 2, w: Math.max(ss, 24), h: Math.max(ss, 26) });
       } else if (ev.state === 'ended') {
         const r = clamp(pw * 0.06, 2, 4.5);
         ctx.fillStyle = rgba(mixc(color, pal.ink, light ? 0 : 0.2), ev.outcome ? 1 : 0.7);
@@ -577,6 +623,16 @@ export class FarmWorld implements World {
         }
         it.top = y - s - 3;
         this.hits.push({ id: ev.id, x: x + s * 0.2, y: y + 2, w: Math.max(s, 24), h: Math.max(s + 6, 26) });
+        // 要赶集、有准备事项的：旗边停一辆车，勾掉的箱子装上车，没勾的空着虚框（只画视角附近的）
+        const prep = ev.prep ?? [];
+        if (kindOf(ev) === 'meet' && prep.length && Math.abs(it.h - T) < 36) {
+          const cs = cartSize(RH), done = prep.filter(p => p.done).length;
+          // 停在旗的右边：会前农夫总在旗的左边（更早的钟点），不会压在一起；不出这块地
+          const cx = Math.min(x + s * 0.6 + cs * 0.55, it.right - cs * 0.55);
+          cart(ctx, cx, y, cs, done, prep.length - done, pal);
+          keep.push({ x0: cx - cs * 0.6, x1: cx + cs, y0: y - cs * 1.3, y1: y });
+          this.hits.push({ id: ev.id, x: cx, y: y + 2, w: Math.max(cs * 1.6, 24), h: Math.max(cs * 1.3, 24) });
+        }
       }
       // 只给视角前后一天半里的写字；进行中的写在农夫头顶
       if (ev.state !== 'live' && Math.abs(it.h - T) < 36) labels.push(it);
@@ -584,7 +640,7 @@ export class FarmWorld implements World {
 
     // 标签：离视角近的优先，最多两个，彼此不重叠，也不压住农夫
     labels.sort((a, b) => Math.abs(a.h - T) - Math.abs(b.h - T));
-    const taken = [...reserved];
+    const taken = [...reserved, ...keep];
     let shown = 0;
     for (const it of labels) {
       if (shown >= 2) break;
@@ -891,6 +947,114 @@ function haystack(ctx: CanvasRenderingContext2D, x: number, y: number, s: number
     const yy = y - s * 0.2 * k, half = s * 0.5 * Math.sqrt(1 - (0.25 * k) ** 2);
     ctx.beginPath(); ctx.moveTo(x - half * 0.85, yy); ctx.lineTo(x + half * 0.85, yy); ctx.stroke();
   }
+}
+
+/** 车、摊子的大小（跟着一行的高） */
+const cartSize = (rh: number) => clamp(rh * 0.36, 11, 24);
+const stallSize = (rh: number) => clamp(rh * 0.85, 24, 56);
+
+/**
+ * 独轮车：木车斗、一个轮子、车把。车斗上码箱子（三只一层）：先是装好的 loaded 只，
+ * 后面 waiting 只还没装的只画一个虚框。x 是车斗中间，y 是地面
+ */
+function cart(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, loaded: number, waiting: number, pal: Pal) {
+  const ink = rgba(pal.ink, 1);
+  ctx.save();
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = ink;
+  // 车把
+  ctx.strokeStyle = rgba(pal.trunk, 1); ctx.lineWidth = Math.max(1.4, s * 0.08);
+  ctx.beginPath(); ctx.moveTo(x + s * 0.4, y - s * 0.45); ctx.lineTo(x + s * 0.95, y - s * 0.2); ctx.stroke();
+  // 轮子
+  const wr = s * 0.22;
+  ctx.fillStyle = 'rgba(122,74,30,1)'; ctx.strokeStyle = ink; ctx.lineWidth = 1.1;
+  ctx.beginPath(); ctx.arc(x - s * 0.2, y - wr, wr, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x - s * 0.2 - wr, y - wr); ctx.lineTo(x - s * 0.2 + wr, y - wr); ctx.moveTo(x - s * 0.2, y - 2 * wr); ctx.lineTo(x - s * 0.2, y); ctx.stroke();
+  // 车斗
+  const bt = y - s * 0.62, bb = y - s * 0.32;
+  ctx.fillStyle = 'rgba(196,128,64,1)';
+  ctx.beginPath(); ctx.moveTo(x - s * 0.5, bt); ctx.lineTo(x + s * 0.5, bt); ctx.lineTo(x + s * 0.4, bb); ctx.lineTo(x - s * 0.4, bb); ctx.closePath();
+  ctx.fill(); ctx.stroke();
+  // 箱子
+  const q = s * 0.3;
+  for (let i = 0; i < Math.min(loaded + waiting, 6); i++) {
+    const layer = Math.floor(i / 3), k = i % 3;
+    const cx = x - s * 0.45 + k * q * 1.02 + layer * q * 0.5, cy = bt - q * (layer + 1);
+    if (i < loaded) crate(ctx, cx, cy, q, pal);
+    else {
+      ctx.strokeStyle = rgba(pal.ink, 0.8); ctx.lineWidth = 0.9; ctx.setLineDash([1.5, 1.5]);
+      ctx.strokeRect(cx, cy, q, q);
+      ctx.setLineDash([]);
+    }
+  }
+  ctx.restore();
+}
+
+function crate(ctx: CanvasRenderingContext2D, x: number, y: number, q: number, pal: Pal) {
+  ctx.fillStyle = rgba(pal.yellow, 1);
+  ctx.fillRect(x, y, q, q);
+  ctx.strokeStyle = rgba(pal.ink, 1); ctx.lineWidth = 0.9;
+  ctx.strokeRect(x, y, q, q);
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + q, y + q); ctx.moveTo(x + q, y); ctx.lineTo(x, y + q); ctx.stroke();
+}
+
+/** 竹篮：编出来的半圆篮子，上面冒出 goods 样货（红果、黄梨、绿菜、紫茄）。返回最高处的 y */
+function basket(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, goods: number, pal: Pal): number {
+  const ink = rgba(pal.ink, 1);
+  const colors: RGB[] = [pal.red, pal.yellow, pal.leaf, [150, 70, 160]];
+  const r = s * 0.2;
+  for (let i = 0; i < goods; i++) {
+    const gx = x + (i - (goods - 1) / 2) * r * 1.5, gy = y - s * 0.5 - (i % 2) * r * 0.5;
+    ctx.fillStyle = rgba(colors[i % colors.length], 1);
+    ctx.beginPath(); ctx.arc(gx, gy, r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = ink; ctx.lineWidth = 0.9; ctx.stroke();
+  }
+  ctx.beginPath();
+  ctx.moveTo(x - s * 0.55, y - s * 0.5);
+  ctx.lineTo(x + s * 0.55, y - s * 0.5);
+  ctx.quadraticCurveTo(x + s * 0.5, y, x, y);
+  ctx.quadraticCurveTo(x - s * 0.5, y, x - s * 0.55, y - s * 0.5);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(201,161,91,1)';
+  ctx.fill();
+  ctx.strokeStyle = ink; ctx.lineWidth = 1.1; ctx.stroke();
+  ctx.save(); ctx.clip();
+  ctx.strokeStyle = 'rgba(140,96,40,1)'; ctx.lineWidth = 0.8;
+  for (let k = -3; k <= 3; k++) { ctx.beginPath(); ctx.moveTo(x + k * s * 0.18, y - s * 0.5); ctx.lineTo(x + k * s * 0.12, y); ctx.stroke(); }
+  ctx.restore();
+  return y - s * 0.5 - r * 1.6;
+}
+
+/** 集市的摊子：两根竹竿，红白条的布棚，木桌上摆几样货。x 是摊子中间，y 是地面；返回棚顶的 y */
+function stall(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, pal: Pal): number {
+  const ink = rgba(pal.ink, 1);
+  const w = s * 0.9, top = y - s * 0.95;
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = rgba(pal.trunk, 1); ctx.lineWidth = Math.max(1.4, s * 0.04);
+  ctx.beginPath(); ctx.moveTo(x - w / 2, y); ctx.lineTo(x - w / 2, top); ctx.moveTo(x + w / 2, y); ctx.lineTo(x + w / 2, top); ctx.stroke();
+  // 桌子和货
+  ctx.fillStyle = 'rgba(196,128,64,1)'; ctx.strokeStyle = ink; ctx.lineWidth = 1.1;
+  ctx.fillRect(x - w * 0.45, y - s * 0.38, w * 0.9, s * 0.14); ctx.strokeRect(x - w * 0.45, y - s * 0.38, w * 0.9, s * 0.14);
+  const colors: RGB[] = [pal.red, pal.yellow, pal.leaf, pal.water];
+  for (let i = 0; i < 4; i++) {
+    ctx.fillStyle = rgba(colors[i], 1);
+    ctx.beginPath(); ctx.arc(x - w * 0.33 + i * w * 0.22, y - s * 0.43, s * 0.06, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  }
+  // 布棚：红白相间，下沿一排扇贝边
+  const n = 5, sw = (w * 1.2) / n, bx = x - w * 0.6, bh = s * 0.22;
+  for (let i = 0; i < n; i++) {
+    ctx.beginPath();
+    ctx.moveTo(bx + i * sw, top);
+    ctx.lineTo(bx + (i + 1) * sw, top);
+    ctx.lineTo(bx + (i + 1) * sw, top + bh);
+    ctx.arc(bx + (i + 0.5) * sw, top + bh, sw / 2, 0, Math.PI);
+    ctx.closePath();
+    ctx.fillStyle = i % 2 ? 'rgba(255,248,232,1)' : rgba(pal.red, 1);
+    ctx.fill(); ctx.stroke();
+  }
+  ctx.restore();
+  return top;
 }
 
 /** 小水塘：一汪蓝水，几道水纹 */
