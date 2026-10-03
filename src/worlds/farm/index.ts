@@ -1,7 +1,7 @@
 import type { World } from '../world';
 import type { EventView, Frame, Kind } from '../../model/types';
 import { kindOf } from '../../model/kind';
-import { DAY, HOUR, MINUTE, fmtDay, fmtTime, isAllDay, localHours } from '../../model/time';
+import { DAY, HOUR, MINUTE, fmtTime, isAllDay, localHours } from '../../model/time';
 import { daylightAt } from '../../model/daylight';
 import { type RGB, SANS, clamp, mixc, mod, rgba, rng, smooth } from '../hike/paint';
 import { subLabel } from '../climb';
@@ -666,8 +666,23 @@ export class FarmWorld implements World {
     }
     folkFarmer(ctx, x, y, s, pose, pal);
 
-    const title = live ? `现在 · ${live.title}` : pose === 'sit' ? '现在 · 在家歇着' : '现在 · 没有日程';
-    const sub = live ? `${JOB[kindOf(live)]} · ${subLabel(live)}` : `${fmtDay(f.now)} ${fmtTime(f.now)}`;
+    if (!live) {
+      ctx.save();
+      // 在家时字牌只写一行，收在村子那一条里（头顶上就是果园树下的名字，不能压住）
+      const text = `${pose === 'sit' ? '现在 · 在家歇着' : '现在 · 没有日程'} · ${fmtTime(f.now)}`;
+      ctx.font = `700 12px ${SANS}`;
+      const half = ctx.measureText(text).width / 2 + 6;
+      const tx = clamp(x, half + 4, W - half - 4);
+      const bottom = Math.max(y - s - 2, this.VIL + 13);
+      tag(ctx, tx - half, bottom - 18, half * 2, 18, light ? [255, 248, 232] : [40, 30, 60], pal);
+      ctx.fillStyle = light ? rgba(pal.red, 1) : 'rgba(255,236,190,1)';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(text, tx, bottom - 8.5);
+      ctx.restore();
+      return;
+    }
+    const title = `现在 · ${live.title}`;
+    const sub = `${JOB[kindOf(live)]} · ${subLabel(live)}`;
     const ty = Math.max(this.SKY + 40, y - s - 8);
     ctx.save();
     ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
