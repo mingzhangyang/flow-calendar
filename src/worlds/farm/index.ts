@@ -1,45 +1,43 @@
 import type { World } from '../world';
 import type { EventView, Frame, Kind } from '../../model/types';
 import { kindOf } from '../../model/kind';
-import { DAY, HOUR, MINUTE, WEEKDAYS, fmtDay, fmtTime, isAllDay, localHours } from '../../model/time';
+import { DAY, HOUR, MINUTE, fmtDay, fmtTime, isAllDay, localHours } from '../../model/time';
 import { daylightAt } from '../../model/daylight';
 import { type RGB, SANS, clamp, mixc, mod, rgba, rng, smooth } from '../hike/paint';
 import { subLabel } from '../climb';
 
 /**
- * 农场世界：农民画。把日历铺在地上，从上往下看，拼成一块块彩色的格子。
+ * 农场世界：农民画。按种什么来分地，日子留在一垄一垄的庄稼里。
  *
- * 一天是一长条地，铺满屏宽，一天一行往上排：往上是以后的日子，往下是过去的日子，
- * 一屏五六天；周日和周一之间隔一排小灌木，看得出一周一周。
- * 一块地里横向是这一天的钟点：6 点在左边、22 点在右边，夜里的日程挤在两头。
+ * 从上往下：一条天；麦田（专注）和菜园（学习）；集市（会议）；果园（习惯）；一条村子。地的位置固定。
  *
- * 做过的事留在地里，按类型（kind.ts）是不同的农活，都只算已经过去的时段：
- *   专注 = 耕地：翻成垄，过几天冒芽、长成青苗，两周左右熟成金黄；
- *   学习 = 播种：撒下种子，两周后才冒芽，三周多开出向日葵；
- *   会议 = 赶集：地没动，压出一条车道。会前小旗边停一辆车，准备事项是车上的木箱，勾掉的装好、没勾的还空着一个虚框；
- *            开会时地里支起集市的摊子，农夫站在摊边；会后写了结论，就留一篮带回来的货（几行结论几样货）；
- *   习惯 = 浇果树：地里留一滴水，村子里那棵树（每种习惯一棵）按近两个月浇过几次长大、开花、结果。
- * 没做事的日子，地空着长草开花。还没到的日程是插在地里的小旗（颜色按类型）。
- * 农夫在今天的地里随钟点走，按手上的农活锄地、撒种、提水，夜里回家坐在门口。
+ * 麦田、菜园里一垄是一天：最下面（田的前头）一垄是视角所在的那天，往上依次是前一天、再前一天，共 15 垄。
+ * 那天这类事做了几小时，这一垄就翻多长（8 小时翻满，多了按比例收）：一个日程一段，
+ * 做过的部分按日子长到哪一步画（麦子：今天红土黄垄，昨天白种子，两三天冒芽，一周青苗，两周熟成金黄；
+ * 菜园：种子两周不见动静，之后冒芽、长苗，三周多开向日葵），还没做的部分是一段虚框。那天没做事，垄空着长草。
+ * 拖动时所有田的垄一起滚，手指下的垄跟着手指走：往上推，以后的日子从田的前头滚上来（只有虚框）；往下拉，看更早的。
+ * 田头插两面小旗：这类事接下来的两个日程。
  *
- * 画风：户县农民画——大块饱和的平涂、粗墨线、满纹样，不讲透视。
- * 上面一条天（日月、卷云、圆圆的小山），下面一条村子（红瓦房、粮仓、树、鸡），都钉在屏幕上；
- * 田在两者之间上下滑动：视角随时间连续往前挪，一天一行，此刻落在“视角”线（屏高 60%）上。
+ * 集市：会前集市口停着下一次会的车，准备事项是车上的木箱（勾掉的装好、没勾的空着虚框）；
+ * 开会时摊子支起来，农夫站在摊边；会后写了结论，带回的一篮货堆在仓房门口。
+ * 果园：每种习惯一棵果树，按近两个月做完几次长大、开花、结果；正在做时农夫提桶站在树边。
+ * 村子：房子和粮仓。不忙的时候农夫在门口，夜里坐在门口歇着。
+ *
+ * 回望：两块田拉长成五周（35 垄），集市和果园淡掉，换成一座大粮仓和这五周的收成。过渡 0.8 秒。
+ *
+ * 画风：户县农民画——大块饱和的平涂、粗墨线、满纹样，不讲透视；全部用代码画。
  * 明暗跟着视角所在的时间：白天和夜里各一套颜色，按白天程度混合；早晚天空染橙红。
- *
- * 回望：一天一条的地折回成一张月历——近五周，一周一行（往上是近的），每格是那天地里缩小的样子；
- * 月历下面一座粮仓，小窗里的谷子跟着这几周耕地的小时数涨，旁边写这几周耕地、播种几小时，赶集、浇树几次。
- * 两种摆法逐块插值，过渡 0.8 秒；回望时小旗、农夫、标签都淡掉，不能拖。
  */
 
-/** 地里的一天从几点到几点（铺满一块地的宽） */
-const DAY0 = 6, DAY1 = 22;
-/** 一屏大约排几天 */
-const DAYS_ON_SCREEN = 5.6;
-/** 回望的过渡要多久（秒）、看几周 */
+/** 夜里从几点到几点：没有日程时农夫回家坐着 */
+const NIGHT0 = 22, NIGHT1 = 6;
+/** 一垄翻满是几小时 */
+const FULL = 8;
+/** 平时、回望时各看几垄 */
+const ROWS = 15, OV_ROWS = 35;
+/** 回望的过渡要多久（秒） */
 const OV_SEC = 0.8;
-const OV_WEEKS = 5;
-/** 粮仓装满要耕多少小时地（四周、每天四小时左右） */
+/** 粮仓装满要耕多少小时地（五周、每天两三小时） */
 const GRANARY_FULL = 80;
 
 /* ---------- 颜色 ---------- */
@@ -95,32 +93,26 @@ function skyAt(hod: number): RGB {
   return SKY[0][1];
 }
 
+
 interface Hit { id: string; x: number; y: number; w: number; h: number }
-interface Box { x0: number; x1: number; y0: number; y1: number }
-const overlaps = (a: Box, b: Box) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
+/** 种在田里的两类：麦田是专注，菜园是学习 */
+type FieldKind = 'focus' | 'learn';
+/** 一垄里的一段：一个日程在这天占几小时（叠在前面日程上的部分不算），已经做了几小时 */
+interface Seg { ev: EventView; hours: number; done: number }
 
 /** 本地小时数 → 第几天（本地午夜为界） */
 const dayOf = (h: number) => Math.floor(h / 24);
-/** 第几天 → 周几（0 是周一）。第 0 天（1970-01-01）是周四 */
-const colOf = (d: number) => mod(d + 3, 7);
-/** 一块地里，某个钟点在横向的位置（0–1） */
-const uIn = (hod: number) => (clamp(hod, DAY0, DAY1) - DAY0) / (DAY1 - DAY0);
 
-/** 一天里某种农活在横向占的几段（0–1，已合并） */
-type Spans = [number, number][];
-/** 一天里做过的农活，按类型分开 */
-type Work = Record<Kind, Spans>;
-const NO_WORK: Work = { focus: [], learn: [], meet: [], habit: [] };
-
-/** 耕过的地长到哪一步：0 种子 1 冒芽 2 青苗 3 转黄 4 熟了 */
+/** 麦子长到哪一步：0 种子 1 冒芽 2 青苗 3 转黄 4 熟了（age：那天过去了几天） */
 const stageOf = (age: number) => (age < 1 ? 0 : age < 3 ? 1 : age < 8 ? 2 : age < 15 ? 3 : 4);
-/** 播的种长到哪一步：0 种子（两周不见动静）1 冒芽 2 青苗 3 开花 */
+/** 菜园长到哪一步：0 种子（两周不见动静）1 冒芽 2 青苗 3 开花 */
 const learnStageOf = (age: number) => (age < 14 ? 0 : age < 18 ? 1 : age < 24 ? 2 : 3);
 
 /** 果树：近两个月浇过几次 → 树苗、小树、大树、开花、结果 */
 const TREE_AT = [1, 3, 7, 14, 21];
 const TREE_NAMES = ['树苗', '小树', '大树', '开花', '结果'];
-interface Orchard { title: string; times: number; stage: number }
+/** 一种习惯一棵树：做完几次、长到哪一步，点树打开哪个日程 */
+interface Orchard { title: string; times: number; stage: number; id: string }
 /** 回望里的收成：从哪天起，耕地、播种几小时，赶集、浇树几次，粮仓装了几成 */
 interface Harvest { from: string; focus: number; learn: number; meets: number; habits: number; fill: number }
 
@@ -130,24 +122,31 @@ export class FarmWorld implements World {
 
   private W = 0; private H = 0;
   private insetTop = 0; private insetBottom = 0;
-  /** 天那一条的下沿、村子那一条的上沿、“视角”线 */
-  private SKY = 0; private VIL = 0; private FY = 0;
-  /** 一块地多宽、一行（一天）多高、田的左边、地和地之间上下各让出多少 */
-  private PW = 0; private RH = 0; private X0 = 0; private GAP = 0;
-  /** 视角所在的天（连续） */
-  private vc = 0;
-  private hits: Hit[] = [];
-  private tilled = new Map<number, Work>();
-  /** 每种习惯一棵果树 */
+  /** 天那一条的下沿、村子那一条的上沿 */
+  private SKY = 0; private VIL = 0;
+  /** 地的左边和总宽（桌面上不超过 760，两边是草地） */
+  private X0 = 0; private FW = 0;
+  /** 两块田的上下沿、田头那一条有多高、集市和果园各自的上下沿 */
+  private fieldTop = 0; private fieldBottom = 0; private headH = 0;
+  private mTop = 0; private mBottom = 0; private oTop = 0; private oBottom = 0;
+  /** 视角所在的那天（连续，今天是整数），真实的今天 */
+  private V = 0; private today = 0;
+  /** 每块田每天的那一垄（键：类型|第几天） */
+  private segs = new Map<string, Seg[]>();
   private orchard: Orchard[] = [];
-  /** 画好的地块：内容和光没变就直接贴 */
-  private plots = new Map<string, HTMLCanvasElement>();
-  private grassTile: { key: string; pattern: CanvasPattern } | null = null;
-  /** 回望：ov 从 0（眼前）走到 1（月历），e 是缓动后的值；ovT 是上一帧的时刻 */
-  private ov = 0; private ovTarget = 0; private ovT = 0; private e = 0;
-  /** 回望里写的那几句：从哪天起、各种农活多少 */
   private harvest: Harvest | null = null;
+  private hits: Hit[] = [];
+  /** 画好的垄：内容、光、尺寸没变就直接贴 */
+  private rows = new Map<string, HTMLCanvasElement>();
   private grain: CanvasPattern | null = null;
+  private grassTile: { key: string; pattern: CanvasPattern } | null = null;
+  /** 回望：ov 从 0（眼前）走到 1（五周），e 是缓动后的值；ovT 是上一帧的时刻 */
+  private ov = 0; private ovTarget = 0; private ovT = 0; private e = 0;
+  /** 这一帧摆好的东西：农夫要站过去的地方 */
+  private stallSpot = { x: 0, y: 0 };
+  private treeSpot = new Map<string, number>();
+  private orchardGround = 0;
+  private house = { x: 0, w: 0, ground: 0 };
 
   constructor(_invalidate: () => void) { /* 全部用代码画，没有要等的素材 */ }
 
@@ -155,38 +154,38 @@ export class FarmWorld implements World {
     this.W = w; this.H = h;
     this.insetTop = insets.top; this.insetBottom = insets.bottom;
     this.SKY = insets.top + clamp(h * 0.13, 90, 130);
-    this.VIL = h - insets.bottom - clamp(h * 0.11, 70, 110);
-    this.FY = h * 0.6;
-    // 一天一长条，手机上铺满屏宽，桌面上不超过 760，两边是草地
-    this.PW = Math.min(w - 32, 760);
-    this.X0 = (w - this.PW) / 2;
-    this.RH = clamp((this.VIL - this.SKY) / DAYS_ON_SCREEN, 78, 140);
-    this.GAP = this.RH * 0.08;
-    this.plots.clear();
+    this.VIL = h - insets.bottom - clamp(h * 0.09, 60, 90);
+    this.FW = Math.min(w - 24, 760);
+    this.X0 = (w - this.FW) / 2;
+    const room = this.VIL - this.SKY;
+    this.headH = 26;
+    const marketH = clamp(room * 0.2, 96, 140), orchardH = clamp(room * 0.24, 120, 170);
+    this.oBottom = this.VIL - 4;
+    this.oTop = this.oBottom - orchardH;
+    this.mBottom = this.oTop;
+    this.mTop = this.mBottom - marketH;
+    this.fieldBottom = this.mTop - this.headH;
+    this.fieldTop = this.SKY + 38;
+    this.rows.clear();
   }
 
-  /** 地上 v（往上数的天，第 d 天占 d 到 d+1）在屏幕上的高度 */
-  private yAt(v: number) { return this.FY - (v - this.vc) * this.RH; }
-
-  /** 第 d 天的日期牌在屏幕上占的地方（标签要让开） */
-  private badgeBox(ctx: CanvasRenderingContext2D, d: number, today: number): Box {
-    const p = this.plotOf(d);
-    ctx.save();
-    const { br, tw } = badgeSize(ctx, dayText(d, d === today), p.h);
-    ctx.restore();
-    return { x0: p.x, x1: p.x + tw + 6, y0: p.y, y1: p.y + br * 2 + 4 };
+  /** 两块田的左边和宽：麦田在左、宽一些，菜园在右 */
+  private fieldRect(kind: FieldKind) {
+    const { X0, FW } = this;
+    return kind === 'focus' ? { x: X0, w: FW * 0.58 } : { x: X0 + FW * 0.61, w: FW * 0.39 };
   }
 
-  /** 第 d 天那块地（不含田埂）：左上角、宽、高 */
-  private plotOf(d: number) {
-    return { x: this.X0, y: this.yAt(d + 1) + this.GAP, w: this.PW, h: this.RH - 2 * this.GAP };
+  /** 此刻一垄多高（回望时 35 垄挤进同一块田） */
+  private rowH() {
+    return (this.fieldBottom - this.fieldTop - 8) / (ROWS + (OV_ROWS - ROWS) * this.e);
   }
 
   draw(ctx: CanvasRenderingContext2D, f: Frame) {
-    const { W, H } = this;
     const T = localHours(f.view), nowH = localHours(f.now);
-    this.vc = T / 24;
-    this.tilled = tillage(f.events, nowH);
+    this.today = dayOf(nowH);
+    // 视角在哪天：今天是整数，拖多少小时就滚多少垄
+    this.V = this.today + (T - nowH) / 24;
+    this.segs = segments(f.events, nowH);
     this.orchard = orchardOf(f.events, f.now);
     this.stepOverview();
     this.harvest = this.measure(f.events, nowH);
@@ -194,49 +193,47 @@ export class FarmWorld implements World {
     const daylight = daylightAt(f.view);
     const pal = palAt(daylight);
     const light = daylight >= 0.5;
-
-    // 田：草地、地块、两边的树
-    ctx.save();
-    ctx.beginPath(); ctx.rect(0, this.SKY, W, H - this.SKY); ctx.clip();
-    this.drawGrass(ctx, pal, daylight);
-    this.drawPlots(ctx, nowH, pal, daylight);
-    this.drawMargins(ctx, pal);
-    ctx.restore();
-
-    this.drawSky(ctx, hod, daylight, pal);
-    this.drawVillage(ctx, pal, daylight);
-    this.drawOverview(ctx, pal, light);
-    this.drawGrain(ctx);
+    const live = f.events.find(e => e.state === 'live' && !isAllDay(e.start, e.end));
 
     this.hits = [];
-    // 回望时小旗、农夫、标签都淡掉，点不中
+    this.drawGrass(ctx, pal, daylight);
+    this.drawMargins(ctx, pal);
+    this.drawField(ctx, 'focus', nowH, pal, daylight, light);
+    this.drawField(ctx, 'learn', nowH, pal, daylight, light);
+    // 回望时田头的小旗、集市、果园都淡掉
     const fade = 1 - smooth(0, 0.4, this.e);
-    if (fade < 0.01) return;
-    ctx.save();
-    ctx.globalAlpha = fade;
-    const live = f.events.find(e => e.state === 'live' && !isAllDay(e.start, e.end));
-    // 农夫最后画，站在小旗和车的前面；他占的地方先量好，标签让开
-    const reserved = this.drawFarmer(ctx, f, nowH, live, pal, light, false);
-    ctx.save();
-    ctx.beginPath(); ctx.rect(0, this.SKY, W, this.VIL - this.SKY); ctx.clip();
-    this.drawEvents(ctx, f.events, T, nowH, pal, light, reserved);
-    ctx.restore();
-    this.drawFarmer(ctx, f, nowH, live, pal, light, true);
-    ctx.restore();
+    if (fade > 0.01) {
+      ctx.save();
+      ctx.globalAlpha = fade;
+      this.drawHeads(ctx, f.events, nowH, pal, light);
+      this.drawMarket(ctx, f.events, f.now, live, pal, light);
+      this.drawOrchard(ctx, pal, light);
+      ctx.restore();
+    }
+    this.drawVillage(ctx, pal, daylight);
+    this.drawSky(ctx, hod, daylight, pal);
+    this.drawOverview(ctx, pal, light);
+    this.drawGrain(ctx);
+    if (fade > 0.01) {
+      ctx.save();
+      ctx.globalAlpha = fade;
+      this.drawFarmer(ctx, f, nowH, live, pal, light);
+      ctx.restore();
+    }
     if (this.ovTarget) this.hits = [];
   }
 
   dragHours(_x: number, _y: number, _dx: number, dy: number): number {
-    // 回望时整张月历都在眼前，不用拖
+    // 回望时整块田都在眼前，不用拖
     if (this.ovTarget) return 0;
-    // 平铺不讲透视：往下拖一行就是一天，手指下的地跟着手指走
-    return (dy / this.RH) * 24;
+    // 手指下的垄跟着手指走：往上推一垄就是往后一天
+    return (-dy / this.rowH()) * 24;
   }
 
   hitTest(x: number, y: number): string | null {
     for (let i = this.hits.length - 1; i >= 0; i--) {
       const h = this.hits[i];
-      if (Math.abs(x - h.x) <= h.w / 2 && y <= h.y + 6 && y >= h.y - h.h) return h.id;
+      if (Math.abs(x - h.x) <= h.w / 2 && y <= h.y + 4 && y >= h.y - h.h) return h.id;
     }
     return null;
   }
@@ -247,6 +244,31 @@ export class FarmWorld implements World {
     this.ovTarget = on ? 1 : 0;
     if (instant) this.ov = this.ovTarget;
     this.ovT = performance.now();
+  }
+
+  idleRedrawMs() {
+    // 今天那一垄一小时只长几个像素，按分钟重画就够了
+    return 60_000;
+  }
+
+  describe(f: Frame): string {
+    const nowH = localHours(f.now), today = dayOf(nowH);
+    const done = (k: FieldKind) => Math.round((this.segs.get(`${k}|${today}`) ?? []).reduce((n, s) => n + s.done, 0) * 10) / 10;
+    let text = '农场按种什么分地：麦田是专注，菜园是学习，一垄一天，最下面一垄是'
+      + (Math.abs(this.V - today) < 0.5 ? '今天' : '正在看的那天')
+      + '；那天做了几小时，这一垄就翻多长，过些天长成庄稼，没做事的日子长草。会议是去集市，习惯是浇果园里的树。'
+      + `今天耕地约 ${done('focus')} 小时，播种约 ${done('learn')} 小时。`;
+    const trip = f.events.filter(e => (e.state === 'future' || e.state === 'soon') && kindOf(e) === 'meet').sort((a, b) => a.start - b.start)[0];
+    if (trip?.prep?.length) {
+      const n = trip.prep.filter(p => p.done).length, left = trip.prep.length - n;
+      text += `下次赶集：${trip.title}，车上装了 ${n} 样${left ? `，还有 ${left} 样没装` : '，都装好了'}。`;
+    }
+    if (this.ovTarget && this.harvest) {
+      const h = this.harvest;
+      text += `正在回望${h.from}到今天：耕地约 ${h.focus} 小时，播种约 ${h.learn} 小时，赶集 ${h.meets} 次，浇树 ${h.habits} 次。`;
+    }
+    if (this.orchard.length) text += `果园里：${this.orchard.map(o => `${o.title}（${TREE_NAMES[o.stage]}）`).join('、')}。`;
+    return text;
   }
 
   /** 回望的过渡往前走一帧 */
@@ -260,35 +282,365 @@ export class FarmWorld implements World {
     this.e = this.ov * this.ov * (3 - 2 * this.ov);
   }
 
-  idleRedrawMs() {
-    // 农夫一小时只在地里挪几个像素，按分钟重画就够了
-    return 60_000;
-  }
-
-  describe(f: Frame): string {
-    const nowH = localHours(f.now);
-    const d0 = dayOf(nowH) - colOf(dayOf(nowH));
-    const hours = (k: Kind) => {
+  /** 近五周的收成 */
+  private measure(events: EventView[], nowH: number): Harvest {
+    const today = dayOf(nowH), d0 = today - OV_ROWS + 1;
+    const hours = (k: FieldKind) => {
       let n = 0;
-      for (let d = d0; d <= dayOf(nowH); d++) for (const [a, b] of this.tilled.get(d)?.[k] ?? []) n += (b - a) * (DAY1 - DAY0);
+      for (let d = d0; d <= today; d++) for (const s of this.segs.get(`${k}|${d}`) ?? []) n += s.done;
       return Math.round(n);
     };
-    let text = `一天是一长条地，往上是以后的日子。这周耕地约 ${hours('focus')} 小时，播种约 ${hours('learn')} 小时。`
-      + '专注是耕地，两周左右熟成金黄；学习是播种，两周后才发芽；会议是赶集；习惯是浇果树。没做事的日子，地空着长草。';
-    const trip = f.events.find(e => e.state !== 'ended' && kindOf(e) === 'meet' && e.prep?.length);
-    if (trip) {
-      const done = trip.prep!.filter(p => p.done).length, left = trip.prep!.length - done;
-      text += `下次赶集：${trip.title}，车上装了 ${done} 样${left ? `，还有 ${left} 样没装` : '，都装好了'}。`;
-    }
-    if (this.ovTarget && this.harvest) {
-      const h = this.harvest;
-      text += `正在回望${h.from}到今天：耕地约 ${h.focus} 小时，播种约 ${h.learn} 小时，赶集 ${h.meets} 次，浇树 ${h.habits} 次。`;
-    }
-    if (this.orchard.length) text += `果园里：${this.orchard.map(o => `${o.title}（${TREE_NAMES[o.stage]}）`).join('、')}。`;
-    return text;
+    const count = (k: Kind) => events.filter(e => e.state === 'ended' && kindOf(e) === k && dayOf(localHours(e.start)) >= d0).length;
+    const date = new Date(noonOf(d0));
+    const focus = hours('focus');
+    return {
+      from: `${date.getMonth() + 1}月${date.getDate()}日`,
+      focus, learn: hours('learn'), meets: count('meet'), habits: count('habit'),
+      fill: clamp(focus / GRANARY_FULL, 0, 1),
+    };
   }
 
-  /* ---------- 天 ---------- */
+  /* ---------- 地面 ---------- */
+
+  /** 草地：满地小点，钉在屏幕上 */
+  private drawGrass(ctx: CanvasRenderingContext2D, pal: Pal, daylight: number) {
+    const key = String(Math.round(daylight * 16));
+    if (this.grassTile?.key !== key) {
+      const c = document.createElement('canvas');
+      c.width = c.height = 64;
+      const g = c.getContext('2d')!;
+      g.fillStyle = rgba(pal.grass, 1); g.fillRect(0, 0, 64, 64);
+      g.fillStyle = rgba(pal.dot, 1);
+      const r = rng(4);
+      for (let i = 0; i < 9; i++) { g.beginPath(); g.arc(r() * 60 + 2, r() * 60 + 2, 1.1, 0, Math.PI * 2); g.fill(); }
+      this.grassTile = { key, pattern: ctx.createPattern(c, 'repeat')! };
+    }
+    ctx.fillStyle = this.grassTile.pattern;
+    ctx.fillRect(0, this.SKY, this.W, this.H - this.SKY);
+  }
+
+  /** 桌面上地两边空着的草地：棒棒糖似的树、草垛、小水塘，排满（农民画不留空） */
+  private drawMargins(ctx: CanvasRenderingContext2D, pal: Pal) {
+    const { X0, W } = this;
+    if (X0 < 40) return;
+    const room = X0 - 16, s = Math.min(90, room * 0.9);
+    const cols = Math.max(1, Math.floor(room / (s * 0.9))), rows = Math.floor((this.VIL - this.SKY - 20) / (s * 1.1));
+    for (const side of [-1, 1]) {
+      for (let i = 0; i < rows; i++) for (let j = 0; j < cols; j++) {
+        const r = rng((side + 2) * 1000 + i * 31 + j * 7);
+        const v = r(), k = r(), kind = r();
+        if (v > 0.65) continue;
+        const cx = (j + 0.3 + 0.4 * k) * (room / cols);
+        const x = side < 0 ? 8 + cx : W - 8 - cx;
+        const y = this.SKY + 20 + (i + 0.8 + 0.2 * r()) * s * 1.1;
+        // 集市那条土路横贯全屏，路上不种东西
+        if (y > this.mTop + 20 && y - s < this.mTop + 30 + clamp((this.mBottom - this.mTop) * 0.36, 34, 50)) continue;
+        if (kind < 0.6) folkTree(ctx, x, y, s, pal);
+        else if (kind < 0.82) haystack(ctx, x, y, s * 0.6, pal);
+        else pond(ctx, x, y - s * 0.15, s * 0.42, pal);
+      }
+    }
+  }
+
+  /* ---------- 麦田、菜园 ---------- */
+
+  /**
+   * 一块田：最下面一垄是视角所在的那天，往上一垄早一天。每垄画好缓存起来；
+   * 回望过渡时先拿 15 垄时的画压扁着贴，到位后换成 35 垄的画。
+   */
+  private drawField(ctx: CanvasRenderingContext2D, kind: FieldKind, nowH: number, pal: Pal, daylight: number, light: boolean) {
+    const { x, w } = this.fieldRect(kind);
+    const top = this.fieldTop, bottom = this.fieldBottom;
+    const dpr = ctx.getTransform().a || 1;
+    // 田的外框：手画似的歪框，田埂是草绿
+    ctx.save();
+    ctx.translate(x, top);
+    wobble(ctx, w, bottom - top, kind === 'focus' ? 11 : 23, 6);
+    ctx.fillStyle = rgba(pal.fallow, 1);
+    ctx.fill();
+    ctx.strokeStyle = rgba(pal.ink, 1);
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
+    sign(ctx, x + 8, top - 24, kind === 'focus' ? '麦田 · 专注' : '菜园 · 学习', pal);
+
+    const rh = this.rowH();
+    const baseRh = (bottom - top - 8) / (this.e < 1 ? ROWS : OV_ROWS);
+    const front = bottom - 4, rx = x + 6, rw = w - 12;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(x + 3, top + 4, w - 6, bottom - top - 8); ctx.clip();
+    const pMax = (bottom - top) / rh + 1;
+    for (let d = Math.floor(this.V - pMax); d <= Math.ceil(this.V + 1); d++) {
+      const p = this.V - d;
+      const yB = front - p * rh, yT = yB - rh;
+      if (yB < top || yT > bottom) continue;
+      const segs = this.segs.get(`${kind}|${d}`) ?? [];
+      const when = d < this.today ? 'past' : d === this.today ? 'today' : 'future';
+      const age = (nowH - (d + 1) * 24) / 24;
+      const c = this.rowCanvas(kind, d, segs, when, age, rw, baseRh, pal, daylight, dpr);
+      ctx.drawImage(c, rx, yT, rw, rh);
+      // 点一段打开那个日程（回望时不点）
+      if (this.e === 0 && segs.length) {
+        const scale = rw / Math.max(FULL, segs.reduce((n, s) => n + s.hours, 0));
+        let cx = rx;
+        for (const s of segs) {
+          const sw = s.hours * scale;
+          this.hits.push({ id: s.ev.id, x: cx + sw / 2, y: yB, w: Math.max(sw, 16), h: Math.max(rh, 18) });
+          cx += sw;
+        }
+      }
+    }
+    ctx.restore();
+
+    // 垄的右头写日子：今天、昨天、明天、一周前……（垄从左边铺起，右头多半空着）
+    const marks: [number, string][] = [[0, '今天'], [-7, '一周前'], [-14, '两周前'], [-21, '三周前'], [-28, '四周前']];
+    if (rh >= 14) marks.push([-1, '昨天'], [1, '明天']);
+    for (const [r, text] of marks) {
+      const p = this.V - (this.today + r);
+      const yc = front - (p + 0.5) * rh;
+      if (yc < top + 8 || yc > bottom - 6) continue;
+      pill(ctx, x + w - 8, yc, text, r === 0, pal, light);
+    }
+  }
+
+  private rowCanvas(kind: FieldKind, d: number, segs: Seg[], when: 'past' | 'today' | 'future', age: number, w: number, h: number, pal: Pal, daylight: number, dpr: number) {
+    const grow = when === 'past' ? `${kind === 'focus' ? stageOf(age) : learnStageOf(age)}.${Math.min(7, Math.floor(age))}` : '';
+    const segKey = segs.map(s => `${s.hours.toFixed(2)}/${s.done.toFixed(2)}`).join(',');
+    const key = `${kind}|${d}|${when}|${grow}|${segKey}|${Math.round(daylight * 16)}|${Math.round(w * dpr)}x${Math.round(h * dpr)}`;
+    let c = this.rows.get(key);
+    if (c) {
+      // 最近用过的放到最后，满了从最久没用的删起
+      this.rows.delete(key); this.rows.set(key, c);
+      return c;
+    }
+    c = document.createElement('canvas');
+    c.width = Math.max(1, Math.ceil(w * dpr)); c.height = Math.max(1, Math.ceil(h * dpr));
+    const g = c.getContext('2d')!;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    paintRow(g, w, h, d, kind, segs, when, age, pal);
+    this.rows.set(key, c);
+    // 两块田平时 30 垄，回望 70 垄，再留一点余地
+    if (this.rows.size > 180) this.rows.delete(this.rows.keys().next().value!);
+    return c;
+  }
+
+  /** 田头两面小旗：这类事接下来的两个日程 */
+  private drawHeads(ctx: CanvasRenderingContext2D, events: EventView[], nowH: number, pal: Pal, light: boolean) {
+    for (const kind of ['focus', 'learn'] as FieldKind[]) {
+      const { x, w } = this.fieldRect(kind);
+      const next = events
+        .filter(e => (e.state === 'future' || e.state === 'soon') && kindOf(e) === kind)
+        .sort((a, b) => a.start - b.start).slice(0, 2);
+      const y = this.fieldBottom + this.headH * 0.62;
+      next.forEach((ev, i) => {
+        const fx = x + 10 + i * (w / 2);
+        const fs = 14;
+        ctx.strokeStyle = rgba(pal.ink, 1); ctx.lineWidth = 1.3;
+        ctx.beginPath(); ctx.moveTo(fx, y + 6); ctx.lineTo(fx, y - fs + 4); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(fx, y - fs + 4); ctx.lineTo(fx + 9, y - fs + 7); ctx.lineTo(fx, y - fs + 10); ctx.closePath();
+        ctx.fillStyle = rgba(FLAG[kind], 1); ctx.fill(); ctx.lineWidth = 1; ctx.stroke();
+        const label = fitText(ctx, `${whenText(ev.start, nowH)} ${ev.title}`, w / 2 - 26, `700 11px ${SANS}`);
+        small(ctx, fx + 12, y - 2, label, 'left', pal, light);
+        ctx.font = `700 11px ${SANS}`;
+        const tw = ctx.measureText(label).width;
+        this.hits.push({ id: ev.id, x: fx + (tw + 12) / 2, y: y + 8, w: tw + 16, h: 24 });
+      });
+    }
+  }
+
+  /* ---------- 集市 ---------- */
+
+  /**
+   * 集市：一条土路，两个摊子。集市口停着下一次会的车，准备事项是车上的木箱；
+   * 开会时农夫站在摊边；右头的仓房门口堆着两周来带回的一篮篮货。
+   */
+  private drawMarket(ctx: CanvasRenderingContext2D, events: EventView[], now: number, live: EventView | undefined, pal: Pal, light: boolean) {
+    const { X0, FW, W } = this;
+    const top = this.mTop, bottom = this.mBottom;
+    sign(ctx, X0 + 8, top + 4, '集市 · 会议', pal);
+    const ry = top + 30, rh = clamp((bottom - top) * 0.36, 34, 50);
+    ctx.fillStyle = rgba(pal.path, 1);
+    ctx.fillRect(0, ry, W, rh);
+    ctx.fillStyle = rgba(pal.ink, 1);
+    ctx.fillRect(0, ry - 1, W, 1.6); ctx.fillRect(0, ry + rh, W, 1.6);
+    ctx.strokeStyle = rgba(pal.rut, 1); ctx.lineWidth = 1.4; ctx.setLineDash([5, 4]);
+    for (const t of [0.35, 0.7]) { ctx.beginPath(); ctx.moveTo(0, ry + rh * t); ctx.lineTo(W, ry + rh * t); ctx.stroke(); }
+    ctx.setLineDash([]);
+    const ground = ry + rh * 0.78;
+
+    // 两个摊子；开会时农夫站在右边那个旁边
+    const ss = clamp(rh * 1.15, 36, 58);
+    const s1 = X0 + FW * 0.44, s2 = X0 + FW * 0.6;
+    stall(ctx, s1, ground, ss, pal);
+    const top2 = stall(ctx, s2, ground, ss, pal);
+    this.stallSpot = { x: s2 + ss * 0.62, y: ground + 2 };
+    const liveMeet = live && kindOf(live) === 'meet' ? live : null;
+    if (liveMeet) this.hits.push({ id: liveMeet.id, x: s2, y: ground + 4, w: ss, h: ground - top2 + 4 });
+
+    // 集市口：下一次会的车（一天半以内的）
+    const next = events
+      .filter(e => (e.state === 'future' || e.state === 'soon') && kindOf(e) === 'meet' && e.start - now < 36 * HOUR)
+      .sort((a, b) => a.start - b.start)[0];
+    const below = ry + rh + 13;
+    if (next) {
+      const cs = clamp(rh * 0.62, 18, 30), cx = X0 + 14 + cs * 0.55;
+      const prep = next.prep ?? [], n = prep.filter(p => p.done).length;
+      cart(ctx, cx, ground, cs, n, prep.length - n, pal);
+      const tail = prep.length ? (n < prep.length ? ` · 还差 ${prep.length - n} 样` : ' · 都装好了') : '';
+      const label = fitText(ctx, `${whenText(next.start, localHours(now))} ${next.title}${tail}`, FW * 0.55, `700 11px ${SANS}`);
+      small(ctx, X0 + 8, below, label, 'left', pal, light);
+      this.hits.push({ id: next.id, x: cx, y: ground + 4, w: Math.max(cs * 1.8, 30), h: cs * 1.4 });
+    }
+
+    // 仓房：两周来写了结论的会，一篮一篮堆在门口
+    const brought = events
+      .filter(e => e.state === 'ended' && kindOf(e) === 'meet' && e.outcome && e.end > now - 14 * DAY)
+      .sort((a, b) => b.end - a.end);
+    const bs = clamp(rh * 1.3, 44, 64), bx = X0 + FW - bs * 0.62;
+    barn(ctx, bx, ground, bs, brought.length, pal);
+    small(ctx, X0 + FW - 6, below, brought.length ? `两周带回 ${brought.length} 篮` : '会后写了结论，就带回一篮', 'right', pal, light);
+    if (brought.length) this.hits.push({ id: brought[0].id, x: bx, y: ground + 4, w: bs, h: bs });
+  }
+
+  /* ---------- 果园 ---------- */
+
+  /** 果园：每种习惯一棵树，树下写名字；还没有习惯时写一句提示 */
+  private drawOrchard(ctx: CanvasRenderingContext2D, pal: Pal, light: boolean) {
+    const { X0, FW } = this;
+    sign(ctx, X0 + 8, this.oTop + 4, '果园 · 习惯', pal);
+    const ground = this.oBottom - 22;
+    this.orchardGround = ground;
+    this.treeSpot.clear();
+    const s = clamp(this.oBottom - this.oTop - 50, 60, 104);
+    if (!this.orchard.length) {
+      small(ctx, X0 + FW / 2, ground - s * 0.4, '有了跑步、冥想这样的习惯，这里就种一棵树', 'center', pal, light);
+      return;
+    }
+    let x = X0 + s * 0.5;
+    for (const o of this.orchard) {
+      if (x > X0 + FW - s * 0.35) break;
+      fruitTree(ctx, x, ground, s, o.stage, pal);
+      ctx.font = `700 11px ${SANS}`;
+      const name = fitText(ctx, o.title, s * 0.9, `700 11px ${SANS}`);
+      const tw = ctx.measureText(name).width + 12;
+      tag(ctx, x - tw / 2, ground + 3, tw, 17, light ? [255, 248, 232] : [40, 30, 60], pal);
+      ctx.fillStyle = light ? rgba(pal.ink, 1) : 'rgba(255,236,190,1)';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(name, x, ground + 12);
+      this.treeSpot.set(o.title, x);
+      this.hits.push({ id: o.id, x, y: ground + 20, w: s * 0.7, h: s + 20 });
+      x += s * 0.95;
+    }
+  }
+
+  /* ---------- 村子 ---------- */
+
+  /** 下面一条村子：土路、红瓦房、粮仓、两只鸡。左右两头会被“回望”“新建”按钮压住，房子摆在中间 */
+  private drawVillage(ctx: CanvasRenderingContext2D, pal: Pal, daylight: number) {
+    const { W, H, VIL } = this;
+    const bh = H - VIL;
+    ctx.fillStyle = rgba(pal.path, 1);
+    ctx.fillRect(0, VIL, W, bh);
+    const r = rng(12);
+    ctx.fillStyle = rgba(mixc(pal.path, pal.ink, 0.25), 1);
+    for (let i = 0; i < W / 9; i++) { ctx.beginPath(); ctx.arc(r() * W, VIL + 6 + r() * (bh - 8), 0.9 + r() * 0.8, 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillStyle = rgba(pal.ink, 1);
+    ctx.fillRect(0, VIL - 1, W, 2.2);
+    const ground = H - this.insetBottom - bh * 0.14;
+    const s = clamp(bh * 1.05, 56, 92);
+    const hw = s * 1.15, hx = W / 2 - hw * 0.62;
+    this.house = { x: hx, w: hw, ground };
+    house(ctx, hx, ground, hw, s * 0.48, pal, 1 - daylight);
+    granary(ctx, hx + hw + s * 0.42, ground, s * 0.5, pal);
+    hen(ctx, hx - s * 0.3, ground - 2, s * 0.08, pal);
+    hen(ctx, hx - s * 0.62, ground, s * 0.07, pal, true);
+  }
+
+  /* ---------- 回望 ---------- */
+
+  /** 回望时集市和果园那片换成一座大粮仓和这五周的收成 */
+  private drawOverview(ctx: CanvasRenderingContext2D, pal: Pal, light: boolean) {
+    const a = smooth(0.55, 1, this.ov);
+    const h = this.harvest;
+    if (a < 0.01 || !h) return;
+    const top = this.mTop, bottom = this.oBottom;
+    const gs = clamp((bottom - top) * 0.6, 80, 150);
+    const total = gs * 0.75 + 16 + 230;
+    const gx = (this.W - total) / 2 + gs * 0.35, ground = top + (bottom - top) * 0.5 + gs * 0.45;
+    ctx.save();
+    ctx.globalAlpha = a;
+    bigGranary(ctx, gx, ground, gs, h.fill, pal);
+    const tx = gx + gs * 0.4 + 16, ty = ground - gs * 0.55;
+    tag(ctx, tx - 10, ty - 24, 240, 72, light ? [255, 248, 232] : [40, 30, 60], pal);
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = light ? rgba(pal.red, 1) : 'rgba(255,236,190,1)';
+    ctx.font = `700 14px ${SANS}`;
+    ctx.fillText(`${h.from}到今天的收成`, tx, ty - 4);
+    ctx.fillStyle = light ? rgba(pal.ink, 1) : 'rgba(255,236,190,.9)';
+    ctx.font = `500 13px ${SANS}`;
+    ctx.fillText(`耕地 ${h.focus} 小时 · 播种 ${h.learn} 小时`, tx, ty + 16);
+    ctx.fillText(`赶集 ${h.meets} 次 · 浇树 ${h.habits} 次`, tx, ty + 35);
+    ctx.restore();
+  }
+
+  /* ---------- 农夫 ---------- */
+
+  /**
+   * 农夫在“现在”做的事那里：专注、学习时在今天那一垄翻到的地方，开会在摊边，习惯在那棵树旁；
+   * 没有日程时在家门口，夜里坐着歇。头顶一块字牌。
+   */
+  private drawFarmer(ctx: CanvasRenderingContext2D, f: Frame, nowH: number, live: EventView | undefined, pal: Pal, light: boolean) {
+    const { W } = this;
+    const hod = mod(nowH, 24);
+    const kind = live ? kindOf(live) : null;
+    let x: number, y: number, s = 46, pose: 'walk' | 'hoe' | 'sow' | 'water' | 'sit' = 'walk';
+    if (kind === 'focus' || kind === 'learn') {
+      const { x: fx, w } = this.fieldRect(kind);
+      const rh = this.rowH(), front = this.fieldBottom - 4;
+      const p = this.V - this.today;
+      const segs = this.segs.get(`${kind}|${this.today}`) ?? [];
+      const scale = (w - 12) / Math.max(FULL, segs.reduce((n, sg) => n + sg.hours, 0));
+      x = fx + 6 + segs.reduce((n, sg) => n + sg.done, 0) * scale;
+      y = front - p * rh - 2;
+      // 今天那一垄滚出了田，就不画
+      if (y < this.fieldTop + 10 || y > this.fieldBottom + 4) return;
+      s = clamp(rh * 2.4, 32, 54);
+      pose = kind === 'focus' ? 'hoe' : 'sow';
+    } else if (kind === 'meet') {
+      ({ x, y } = this.stallSpot);
+    } else if (kind === 'habit') {
+      x = (this.treeSpot.get(live!.title.trim()) ?? this.X0 + 50) + 30;
+      y = this.orchardGround;
+      pose = 'water';
+    } else {
+      x = this.house.x + this.house.w * 0.86; y = this.house.ground;
+      s = 40;
+      if (hod >= NIGHT0 || hod < NIGHT1) pose = 'sit';
+    }
+    folkFarmer(ctx, x, y, s, pose, pal);
+
+    const title = live ? `现在 · ${live.title}` : pose === 'sit' ? '现在 · 在家歇着' : '现在 · 没有日程';
+    const sub = live ? `${JOB[kindOf(live)]} · ${subLabel(live)}` : `${fmtDay(f.now)} ${fmtTime(f.now)}`;
+    const ty = Math.max(this.SKY + 40, y - s - 8);
+    ctx.save();
+    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.font = `700 13px ${SANS}`;
+    const w1 = ctx.measureText(title).width;
+    ctx.font = `500 12px ${SANS}`;
+    const w2 = ctx.measureText(sub).width;
+    const half = Math.max(w1, w2) / 2 + 6;
+    const tx = clamp(x, half + 4, W - half - 4);
+    tag(ctx, tx - half, ty - 33, half * 2, 35, light ? [255, 248, 232] : [40, 30, 60], pal);
+    ctx.fillStyle = light ? rgba(pal.red, 1) : 'rgba(255,236,190,1)';
+    ctx.font = `700 13px ${SANS}`;
+    ctx.fillText(title, tx, ty - 16);
+    ctx.font = `500 12px ${SANS}`;
+    ctx.fillStyle = light ? rgba(pal.ink, 0.8) : 'rgba(255,236,190,.8)';
+    ctx.fillText(sub, tx, ty);
+    ctx.restore();
+  }
+
+  /* ---------- 天、纸纹 ---------- */
 
   /** 上面一条天：日月、卷云或星星，底下一排圆圆的小山把远处的田挡住 */
   private drawSky(ctx: CanvasRenderingContext2D, hod: number, daylight: number, pal: Pal) {
@@ -372,251 +724,6 @@ export class FarmWorld implements World {
     ctx.strokeStyle = rgba(pal.ink, 1); ctx.lineWidth = 1.3; ctx.stroke();
   }
 
-  /* ---------- 田 ---------- */
-
-  /** 草地：满地小点，跟着田一起滑 */
-  private drawGrass(ctx: CanvasRenderingContext2D, pal: Pal, daylight: number) {
-    const key = String(Math.round(daylight * 16));
-    if (this.grassTile?.key !== key) {
-      const c = document.createElement('canvas');
-      c.width = c.height = 64;
-      const g = c.getContext('2d')!;
-      g.fillStyle = rgba(pal.grass, 1); g.fillRect(0, 0, 64, 64);
-      g.fillStyle = rgba(pal.dot, 1);
-      const r = rng(4);
-      for (let i = 0; i < 9; i++) { g.beginPath(); g.arc(r() * 60 + 2, r() * 60 + 2, 1.1, 0, Math.PI * 2); g.fill(); }
-      this.grassTile = { key, pattern: ctx.createPattern(c, 'repeat')! };
-    }
-    const p = this.grassTile.pattern;
-    p.setTransform(new DOMMatrix().translate(0, mod(this.vc * this.RH, 64)));
-    ctx.fillStyle = p;
-    ctx.fillRect(0, this.SKY, this.W, this.H - this.SKY);
-  }
-
-  private visibleDays(): [number, number] {
-    // 往上画到天，往下画到画面底边
-    return [Math.floor(this.vc + (this.FY - this.H) / this.RH) - 1, Math.ceil(this.vc + (this.FY - this.SKY) / this.RH)];
-  }
-
-  /* ---------- 回望的月历 ---------- */
-
-  /** 月历的第一天：这周一往回四周 */
-  private gridStart(today: number) { return today - colOf(today) - (OV_WEEKS - 1) * 7; }
-
-  /** 月历的摆法：格子多大、从哪儿起，下面粮仓那一条从哪儿起、多高。月历和粮仓合在一起上下居中 */
-  private gridLayout() {
-    const top = this.SKY + 34, room = this.VIL - 10 - top;
-    const sumH = clamp(this.H * 0.15, 96, 140), space = 18;
-    const cw = Math.min(Math.min(this.W - 32, 760) / 7, (room - sumH - space) / OV_WEEKS / 1.05);
-    const ch = cw * 1.05;
-    const y0 = top + Math.max(0, (room - OV_WEEKS * ch - space - sumH) / 2);
-    const bottom = y0 + OV_WEEKS * ch;
-    return { cw, ch, x0: (this.W - 7 * cw) / 2, y0, bottom, sumTop: bottom + space, sumH };
-  }
-
-  /** 第 d 天在月历里的那一格（不在近五周里的返回 null） */
-  private gridOf(d: number, today: number) {
-    const k = d - this.gridStart(today);
-    if (k < 0 || k >= OV_WEEKS * 7) return null;
-    const { cw, ch, x0, y0 } = this.gridLayout();
-    const row = OV_WEEKS - 1 - Math.floor(k / 7), col = k % 7, gap = cw * 0.06;
-    return { x: x0 + col * cw + gap, y: y0 + row * ch + gap, w: cw - 2 * gap, h: ch - 2 * gap };
-  }
-
-  /** 这几周的收成：各种农活多少，粮仓装了几成 */
-  private measure(events: EventView[], nowH: number): Harvest {
-    const today = dayOf(nowH), g0 = this.gridStart(today);
-    const hours = (k: Kind) => {
-      let n = 0;
-      for (let d = g0; d <= today; d++) for (const [a, b] of this.tilled.get(d)?.[k] ?? []) n += (b - a) * (DAY1 - DAY0);
-      return Math.round(n);
-    };
-    const count = (k: Kind) => events.filter(e => e.state === 'ended' && kindOf(e) === k && dayOf(localHours(e.start)) >= g0).length;
-    const date = new Date(noonOf(g0));
-    const focus = hours('focus');
-    return {
-      from: `${date.getMonth() + 1}月${date.getDate()}日`,
-      focus, learn: hours('learn'), meets: count('meet'), habits: count('habit'),
-      fill: clamp(focus / GRANARY_FULL, 0, 1),
-    };
-  }
-
-  /** 第 d 天画好的地（按内容、光、尺寸缓存）。compact：回望里的小格子，牌子上只写几号 */
-  private plotCanvas(d: number, nowH: number, pw: number, ph: number, compact: boolean, pal: Pal, daylight: number, dpr: number) {
-    const today = dayOf(nowH);
-    const pad = Math.ceil(ph * 0.06);
-    const work = d <= today ? this.tilled.get(d) ?? NO_WORK : NO_WORK;
-    const age = (nowH - (d + 1) * 24) / 24;
-    const when = d === today ? 'today' : d > today ? 'future' : 'past';
-    // 长到哪一步、长草的多少都随日子慢慢变，按天取整就够了
-    const grow = when === 'past' ? `${stageOf(age)}.${learnStageOf(age)}.${Math.min(7, Math.floor(age))}` : '';
-    const key = `${d}|${when}|${grow}|${workKey(work)}|${Math.round(daylight * 16)}|${Math.round(pw * dpr)}x${Math.round(ph * dpr)}|${compact ? 1 : 0}`;
-    let c = this.plots.get(key);
-    if (c) {
-      // 最近用过的放到最后，满了从最久没用的删起
-      this.plots.delete(key); this.plots.set(key, c);
-    } else {
-      c = document.createElement('canvas');
-      c.width = Math.ceil((pw + 2 * pad) * dpr); c.height = Math.ceil((ph + 2 * pad) * dpr);
-      const g = c.getContext('2d')!;
-      g.setTransform(dpr, 0, 0, dpr, pad * dpr, pad * dpr);
-      paintPlot(g, pw, ph, d, work, when, age, pal, daylight >= 0.5, compact);
-      this.plots.set(key, c);
-      // 一屏的长条加上回望的月历，再留一点余地
-      if (this.plots.size > 100) this.plots.delete(this.plots.keys().next().value!);
-    }
-    return { c, pad };
-  }
-
-  private drawPlots(ctx: CanvasRenderingContext2D, nowH: number, pal: Pal, daylight: number) {
-    const [d0, d1] = this.visibleDays();
-    const today = dayOf(nowH);
-    const dpr = ctx.getTransform().a || 1;
-    const e = this.e;
-    const blit = (c: HTMLCanvasElement, pad: number, sw: number, sh: number, r: { x: number; y: number; w: number; h: number }, a: number) => {
-      if (a < 0.01) return;
-      // 画布按原来的大小留了边，贴到 r 时边也按比例缩放
-      const kx = r.w / sw, ky = r.h / sh;
-      ctx.globalAlpha = a;
-      ctx.drawImage(c, r.x - pad * kx, r.y - pad * ky, (sw + 2 * pad) * kx, (sh + 2 * pad) * ky);
-      ctx.globalAlpha = 1;
-    };
-    // 眼前看得见的天，加上回望里的近五周
-    const days = new Set<number>();
-    for (let d = d0; d <= d1; d++) days.add(d);
-    if (e > 0) for (let k = 0, g0 = this.gridStart(today); k < OV_WEEKS * 7; k++) days.add(g0 + k);
-    for (const d of [...days].sort((a, b) => a - b)) {
-      const strip = this.plotOf(d);
-      const cell = e > 0 ? this.gridOf(d, today) : null;
-      // 周一底下（和周日之间）一排小灌木，分开一周一周；回望时淡掉
-      if (colOf(d) === 0 && e < 1) {
-        ctx.globalAlpha = 1 - e;
-        hedge(ctx, strip.x, this.yAt(d), strip.w, this.GAP, pal);
-        ctx.globalAlpha = 1;
-      }
-      if (!cell) {
-        // 不在月历里的日子，回望时就地淡掉
-        if (strip.y > this.H || strip.y + strip.h < this.SKY) continue;
-        const s1 = this.plotCanvas(d, nowH, strip.w, strip.h, false, pal, daylight, dpr);
-        blit(s1.c, s1.pad, strip.w, strip.h, strip, 1 - e);
-        continue;
-      }
-      const r = {
-        x: strip.x + (cell.x - strip.x) * e, y: strip.y + (cell.y - strip.y) * e,
-        w: strip.w + (cell.w - strip.w) * e, h: strip.h + (cell.h - strip.h) * e,
-      };
-      if (r.y > this.H || r.y + r.h < this.SKY) continue;
-      // 前半程贴长条的画、后半程贴小格子的画，中间交叉淡入淡出
-      const t = smooth(0.35, 0.85, e);
-      if (t < 1) { const s1 = this.plotCanvas(d, nowH, strip.w, strip.h, false, pal, daylight, dpr); blit(s1.c, s1.pad, strip.w, strip.h, r, 1 - t); }
-      if (t > 0) { const s2 = this.plotCanvas(d, nowH, cell.w, cell.h, true, pal, daylight, dpr); blit(s2.c, s2.pad, cell.w, cell.h, r, t); }
-    }
-  }
-
-  /** 回望时月历上面一行周几，下面一座粮仓和这几周的收成 */
-  private drawOverview(ctx: CanvasRenderingContext2D, pal: Pal, light: boolean) {
-    const a = smooth(0.55, 1, this.ov);
-    const h = this.harvest;
-    if (a < 0.01 || !h) return;
-    const { cw, x0, y0, sumTop, sumH } = this.gridLayout();
-    ctx.save();
-    ctx.globalAlpha = a;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.font = `700 12px ${SANS}`;
-    for (let c = 0; c < 7; c++) {
-      const x = x0 + (c + 0.5) * cw;
-      tag(ctx, x - 13, y0 - 22, 26, 18, light ? [255, 248, 232] : [40, 30, 60], pal);
-      ctx.fillStyle = light ? rgba(pal.ink, 1) : 'rgba(255,236,190,1)';
-      ctx.fillText('一二三四五六日'[c], x, y0 - 7);
-    }
-    // 粮仓在左，三行字在右
-    const gs = clamp(sumH * 0.95, 60, 120);
-    const total = gs * 0.75 + 16 + 220;
-    const gx = (this.W - total) / 2 + gs * 0.35, ground = sumTop + sumH * 0.95;
-    bigGranary(ctx, gx, ground, gs, h.fill, pal);
-    const tx = gx + gs * 0.4 + 16, ty = ground - gs * 0.62;
-    tag(ctx, tx - 10, ty - 24, 236, 70, light ? [255, 248, 232] : [40, 30, 60], pal);
-    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
-    ctx.fillStyle = light ? rgba(pal.red, 1) : 'rgba(255,236,190,1)';
-    ctx.font = `700 14px ${SANS}`;
-    ctx.fillText(`${h.from}到今天的收成`, tx, ty - 4);
-    ctx.fillStyle = light ? rgba(pal.ink, 1) : 'rgba(255,236,190,.9)';
-    ctx.font = `500 13px ${SANS}`;
-    ctx.fillText(`耕地 ${h.focus} 小时 · 播种 ${h.learn} 小时`, tx, ty + 16);
-    ctx.fillText(`赶集 ${h.meets} 次 · 浇树 ${h.habits} 次`, tx, ty + 35);
-    ctx.restore();
-  }
-
-  /** 桌面上田两边空着的草地：棒棒糖似的树、草垛、小水塘，按行钉住，排满（农民画不留空） */
-  private drawMargins(ctx: CanvasRenderingContext2D, pal: Pal) {
-    const { X0, RH, W } = this;
-    if (X0 < 34 || this.e >= 1) return;
-    ctx.save();
-    ctx.globalAlpha = 1 - this.e;
-    const [w0, w1] = this.visibleDays();
-    const room = X0 - 12;
-    const s = Math.min(RH * 0.95, room * 0.9);
-    const slots = Math.max(1, Math.floor(room / (s * 0.85)));
-    for (let w = w1; w >= w0; w--) {
-      const r = rng(w * 31 + 7);
-      for (const side of [-1, 1]) {
-        for (let i = 0; i < slots; i++) {
-          const v = r(), k = r(), kind = r();
-          if (v > 0.6) continue;
-          const cx = (i + 0.3 + 0.4 * k) * (room / slots);
-          const x = side < 0 ? 8 + cx : W - 8 - cx;
-          const y = this.yAt(w + v);
-          if (kind < 0.6) folkTree(ctx, x, y, s, pal);
-          else if (kind < 0.82) haystack(ctx, x, y, s * 0.6, pal);
-          else pond(ctx, x, y - s * 0.15, s * 0.42, pal);
-        }
-      }
-    }
-    ctx.restore();
-  }
-
-  /* ---------- 村子 ---------- */
-
-  /** 下面一条村子：土路、红瓦房、圆粮仓、树、两只鸡，钉在屏幕上 */
-  private drawVillage(ctx: CanvasRenderingContext2D, pal: Pal, daylight: number) {
-    const { W, H, VIL } = this;
-    const bh = H - VIL;
-    ctx.fillStyle = rgba(pal.path, 1);
-    ctx.fillRect(0, VIL, W, bh);
-    const r = rng(12);
-    ctx.fillStyle = rgba(mixc(pal.path, pal.ink, 0.25), 1);
-    for (let i = 0; i < W / 9; i++) { ctx.beginPath(); ctx.arc(r() * W, VIL + 6 + r() * (bh - 8), 0.9 + r() * 0.8, 0, Math.PI * 2); ctx.fill(); }
-    ctx.fillStyle = rgba(pal.ink, 1);
-    ctx.fillRect(0, VIL - 1, W, 2.2);
-
-    const ground = H - this.insetBottom - bh * 0.18;
-    const s = clamp(bh * 0.95, 60, 104);
-    // 粮仓在右头（手机上“新建”按钮压着它也不要紧），房子挨着它，左边整片是果园
-    const hx = W - s * 2.25;
-    this.house = { x: hx, w: s * 1.15, ground };
-    house(ctx, hx, ground, s * 1.15, s * 0.5, pal, 1 - daylight);
-    granary(ctx, W - s * 0.5, ground, s * 0.5, pal);
-    hen(ctx, hx + s * 1.33, ground - 2, s * 0.08, pal);
-    // 从左往右一棵挨一棵：先种习惯的果树（浇得多的在前），剩下的空位种普通的树
-    // 左下角是“回望”按钮，果园从它右边种起；按钮底下种一棵普通的树，露出树冠
-    folkTree(ctx, s * 0.45, ground, s * 0.95, pal);
-    for (let i = 0, x = Math.max(s * 0.45, 112 + s * 0.3); x < hx - s * 0.35; i++, x += s * 0.95) {
-      const o = this.orchard[i];
-      // 空位隔一个种一棵普通的树，不排成一道篱笆
-      if (!o) { if ((i - this.orchard.length) % 2 === 0) folkTree(ctx, x, ground, s * 0.95, pal); continue; }
-      fruitTree(ctx, x, ground, s * 0.95, o.stage, pal);
-      // 树下的土路上写是哪种习惯
-      ctx.save();
-      ctx.font = `700 10px ${SANS}`;
-      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      ctx.fillStyle = rgba(pal.ink, 1);
-      ctx.fillText(o.title.length > 5 ? o.title.slice(0, 4) + '…' : o.title, x, ground + 2);
-      ctx.restore();
-    }
-  }
-  /** 房子的位置：夜里农夫坐在门口 */
-  private house = { x: 0, w: 0, ground: 0 };
-
   /** 一层很淡的纸纹，像画在纸上 */
   private drawGrain(ctx: CanvasRenderingContext2D) {
     if (!this.grain) {
@@ -636,221 +743,271 @@ export class FarmWorld implements World {
     ctx.fillStyle = this.grain;
     ctx.fillRect(0, 0, this.W, this.H);
   }
+}
 
-  /* ---------- 农夫 ---------- */
+/* ---------- 一垄 ---------- */
 
-  /**
-   * 白天在今天的地里随钟点走（按手上的农活换动作，赶集时站在摊边），夜里回家坐在门口。
-   * 返回他和头顶文字占掉的地方；paint 为 false 时只量不画（先量好让标签让开，最后再画到最前面）
-   */
-  private drawFarmer(ctx: CanvasRenderingContext2D, f: Frame, nowH: number, live: EventView | undefined, pal: Pal, light: boolean, paint: boolean): Box[] {
-    const { W, RH } = this;
-    const d = dayOf(nowH), hod = nowH - d * 24;
-    const home = (hod >= DAY1 || hod < DAY0) && !live;
-    let x: number, y: number, s: number;
-    /** 头顶的字牌要高过什么：农夫自己，赶集时还有摊子 */
-    let head: number;
-    if (home) {
-      s = clamp((this.H - this.VIL) * 0.55, 34, 60);
-      x = this.house.x + this.house.w * 0.78; y = this.house.ground;
-      if (paint) folkFarmer(ctx, x, y, s, 'sit', pal);
-      head = s;
-    } else {
-      const p = this.plotOf(d);
-      x = p.x + uIn(hod) * p.w;
-      y = p.y + p.h * 0.88;
-      if (y < this.SKY + 10 || y > this.VIL) return [];
-      s = farmerSize(RH);
-      const kind = live ? kindOf(live) : null;
-      const market = kind === 'meet' && dayOf(localHours(live!.start)) === d;
-      // 赶集：站在摊子右边
-      if (market) x = stallX(p.x + uIn(localHours(live!.start) - d * 24) * p.w, p.x + p.w, RH) + stallSize(RH) * 0.5;
-      const pose = !kind ? 'walk' : ({ focus: 'hoe', learn: 'sow', habit: 'water', meet: 'walk' } as const)[kind];
-      if (paint) folkFarmer(ctx, x, y, s, pose, pal);
-      head = market ? Math.max(s, stallSize(RH)) : s;
+/**
+ * 画一垄（原点在左上角）：一个日程一段，按小时数从左往右铺（8 小时铺满，多了按比例收）。
+ * 做过的部分按日子长到哪一步画纹样，还没做的部分是一段虚框；没铺到的地方，过去的长草，以后的是浅杏色。
+ */
+function paintRow(
+  g: CanvasRenderingContext2D, w: number, h: number, d: number, kind: FieldKind,
+  segs: Seg[], when: 'past' | 'today' | 'future', age: number, pal: Pal,
+) {
+  const ink = rgba(pal.ink, 1);
+  const k = clamp(h / 18, 0.6, 1.6);
+  const inset = Math.min(1.5, h * 0.12), r = Math.min(3, h * 0.3);
+  const body = () => roundRect(g, 0.5, inset, w - 1, h - 2 * inset, r);
+  body();
+  g.fillStyle = rgba(when === 'past' ? pal.fallow : pal.bare, 1);
+  g.fill();
+  g.save();
+  body();
+  g.clip();
+  if (when === 'past' && h > 6) {
+    // 空着长草：一排人字纹
+    const rr = rng(d * 13 + (kind === 'focus' ? 1 : 7));
+    g.strokeStyle = rgba(pal.weed, 1);
+    g.lineWidth = 0.9 * k;
+    for (let i = 0; i < w / 9; i++) {
+      const x = rr() * w, y = h * 0.72, q = 2 * k;
+      g.beginPath(); g.moveTo(x - q, y - q * 1.4); g.lineTo(x, y); g.lineTo(x + q, y - q * 1.4); g.stroke();
     }
-    // 头顶两行字：“现在”和钟点；忙着的时候换成日程的名字和还要准备几项
-    const title = live ? `现在 · ${live.title}` : home ? '现在 · 在家歇着' : '现在';
-    const sub = live ? `${JOB[kindOf(live)]} · ${subLabel(live)}` : `${fmtDay(f.now)} ${fmtTime(f.now)}`;
-    const ty = Math.max(this.SKY + 34, y - head - 6);
-    ctx.save();
-    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.font = `700 13px ${SANS}`;
-    const w1 = ctx.measureText(title).width;
-    ctx.font = `500 12px ${SANS}`;
-    const w2 = ctx.measureText(sub).width;
-    const half = Math.max(w1, w2) / 2 + 6;
-    let tx = clamp(x, half + 4, W - half - 4);
-    // 别压住今天的日期牌：挨上了就往右让
-    const badge = this.badgeBox(ctx, d, d);
-    if (!home && ty + 2 > badge.y0 && ty - 34 < badge.y1 && tx - half < badge.x1) tx = Math.min(W - half - 4, badge.x1 + half + 4);
-    const boxes = [
-      { x0: tx - half, x1: tx + half, y0: ty - 34, y1: ty + 2 },
-      { x0: x - s * 0.4, x1: x + s * 0.6, y0: y - s, y1: y + 4 },
-    ];
-    if (!paint) { ctx.restore(); return boxes; }
-    // 农民画里的字写在一块小牌子上
-    tag(ctx, tx - half, ty - 33, half * 2, 35, light ? [255, 248, 232] : [40, 30, 60], pal);
-    ctx.fillStyle = light ? rgba(pal.red, 1) : 'rgba(255,236,190,1)';
-    ctx.font = `700 13px ${SANS}`;
-    ctx.fillText(title, tx, ty - 16);
-    ctx.font = `500 12px ${SANS}`;
-    ctx.fillStyle = light ? rgba(pal.ink, 0.8) : 'rgba(255,236,190,.8)';
-    ctx.fillText(sub, tx, ty);
-    ctx.restore();
-    return boxes;
   }
-
-  /* ---------- 日程 ---------- */
-
-  /**
-   * 还没做的日程是插在地里的小旗（按开始的钟点排开，挨得近的错开），进行中的旗外画一圈红；
-   * 做完的在地的下半截留一颗彩珠，写了结论的旁边盖一方小红印。
-   */
-  private drawEvents(ctx: CanvasRenderingContext2D, events: EventView[], T: number, nowH: number, pal: Pal, light: boolean, reserved: Box[]) {
-    const { RH, W } = this;
-    const [d0, d1] = this.visibleDays();
-    type Item = { ev: EventView; h: number; x: number; y: number; top: number; right: number; ph: number };
-    const items: Item[] = [];
-    const lanes = new Map<string, [number, number][]>();
-    for (const ev of events) {
-      const sH = localHours(ev.start);
-      const allDay = isAllDay(ev.start, ev.end);
-      const d = dayOf(sH);
-      if (d < d0 || d > d1) continue;
-      const { x: px, y: yTop, w: pw, h: ph } = this.plotOf(d);
-      const hod = allDay ? 13 : sH - d * 24;
-      const u = uIn(hod);
-      const ended = ev.state === 'ended';
-      const key = `${d}|${ended ? 1 : 0}`;
-      const used = lanes.get(key) ?? [];
-      let lane = 0;
-      // 挨得近：两面旗的横向距离不到一面旗宽
-      const near = clamp(ph * 0.3, 9, 22) / pw;
-      while (lane < 2 && used.some(([pu, pl]) => pl === lane && Math.abs(pu - u) < near)) lane++;
-      used.push([u, lane]);
-      lanes.set(key, used);
-      const x = px + u * pw;
-      const y = ended ? yTop + ph * (0.8 - lane * 0.16) : yTop + ph * (0.62 - lane * 0.2);
-      items.push({ ev, h: allDay ? d * 24 + 13 : sH, x, y, top: y, right: px + pw, ph });
+  const scale = w / Math.max(FULL, segs.reduce((n, s) => n + s.hours, 0));
+  const st = growth(kind, when, age);
+  let cx = 0;
+  segs.forEach((s, i) => {
+    const sw = s.hours * scale, dw = s.done * scale;
+    if (dw > 0.5) {
+      g.fillStyle = rgba(BASE[st](pal), 1);
+      g.fillRect(cx, 0, dw, h);
+      pattern(g, cx, cx + dw, h, st, k, pal);
     }
+    if (sw - dw > 0.5) {
+      // 还没做：一段虚框
+      g.fillStyle = 'rgba(255,255,255,.3)';
+      g.fillRect(cx + dw, 0, sw - dw, h);
+      g.strokeStyle = ink;
+      g.lineWidth = 1;
+      g.setLineDash([3, 2]);
+      g.strokeRect(cx + dw + 1, inset + 1, sw - dw - 2, h - 2 * inset - 2);
+      g.setLineDash([]);
+    }
+    cx += sw;
+    if (i < segs.length - 1 || cx < w - 1) {
+      g.strokeStyle = ink; g.lineWidth = 0.9;
+      g.beginPath(); g.moveTo(cx, 0); g.lineTo(cx, h); g.stroke();
+    }
+  });
+  g.restore();
+  body();
+  g.strokeStyle = ink;
+  g.lineWidth = 0.9;
+  g.stroke();
+}
 
-    const labels: Item[] = [];
-    // 标签不压住日期牌、摊子和车（农夫在 reserved 里）
-    const keep: Box[] = [];
-    const today = dayOf(nowH);
-    for (let d = d0; d <= d1; d++) keep.push(this.badgeBox(ctx, d, today));
-    for (const it of items) {
-      const { ev, x, y, ph } = it;
-      const color = FLAG[kindOf(ev)];
-      if (ev.state === 'ended' && kindOf(ev) === 'habit') {
-        // 浇过的树：地里那滴水就是它，点水滴打开；写了结论在旁边盖小红印
-        const q = dropSize(ph), wy = this.plotOf(dayOf(it.h)).y + ph * 0.6;
-        if (ev.outcome) {
-          ctx.fillStyle = rgba(pal.red, 1);
-          ctx.fillRect(x + q, wy - q * 1.6, q, q);
-          ctx.strokeStyle = rgba(pal.ink, 1); ctx.lineWidth = 1; ctx.strokeRect(x + q, wy - q * 1.6, q, q);
-        }
-        it.top = wy - q * 1.6;
-        this.hits.push({ id: ev.id, x, y: wy + q * 1.4, w: 24, h: 26 });
-      } else if (ev.state === 'ended' && kindOf(ev) === 'meet' && ev.outcome) {
-        // 赶集回来：一篮换回来的货，结论有几行就几样；旁边盖小红印
-        const bs = cartSize(RH) * 0.75;
-        const goods = Math.min(4, ev.outcome.split('\n').filter(l => l.trim()).length || 1);
-        const top = basket(ctx, x, y, bs, goods, pal);
-        const q = bs * 0.22;
-        ctx.fillStyle = rgba(pal.red, 1);
-        ctx.fillRect(x + bs * 0.55, top, q, q);
-        ctx.strokeStyle = rgba(pal.ink, 1); ctx.lineWidth = 1; ctx.strokeRect(x + bs * 0.55, top, q, q);
-        it.top = top - 2;
-        this.hits.push({ id: ev.id, x, y: y + 2, w: Math.max(bs * 1.4, 24), h: Math.max(y - top + 6, 24) });
-      } else if (ev.state === 'live' && kindOf(ev) === 'meet') {
-        // 正在赶集：支起一个摊子，农夫站在旁边（drawFarmer）
-        const ss = stallSize(RH), sx = stallX(x, it.right, RH);
-        const top = stall(ctx, sx, y + ph * 0.2, ss, pal);
-        keep.push({ x0: sx - ss * 0.5, x1: sx + ss * 0.5, y0: top, y1: y + ph * 0.2 });
-        it.top = top - 2;
-        this.hits.push({ id: ev.id, x: sx, y: y + ph * 0.2 + 2, w: Math.max(ss, 24), h: Math.max(ss, 26) });
-      } else if (ev.state === 'ended') {
-        const r = clamp(ph * 0.06, 2, 5);
-        ctx.fillStyle = rgba(mixc(color, pal.ink, light ? 0 : 0.2), ev.outcome ? 1 : 0.7);
-        ctx.beginPath(); ctx.arc(x, y - r, r, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = rgba(pal.ink, 0.9); ctx.lineWidth = 1; ctx.stroke();
-        if (ev.outcome) {
-          const q = r * 1.3;
-          ctx.fillStyle = rgba(pal.red, 1);
-          ctx.fillRect(x + r * 1.1, y - r * 2.4, q, q);
-          ctx.strokeRect(x + r * 1.1, y - r * 2.4, q, q);
-        }
-        it.top = y - r * 2.6;
-        this.hits.push({ id: ev.id, x, y: y + 2, w: Math.max(r * 5, 24), h: Math.max(r * 5, 24) });
-      } else {
-        // 竹竿挑一面三角小旗
-        const s = clamp(ph * 0.3, 9, 20);
-        ctx.strokeStyle = rgba(pal.ink, 1);
-        ctx.lineWidth = 1.3;
-        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - s); ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(x, y - s); ctx.lineTo(x + s * 0.6, y - s * 0.78); ctx.lineTo(x, y - s * 0.56);
-        ctx.closePath();
-        ctx.fillStyle = rgba(mixc(color, pal.ink, light ? 0 : 0.15), 1);
-        ctx.fill();
-        ctx.lineWidth = 1; ctx.stroke();
-        if (ev.state === 'live') {
-          ctx.strokeStyle = rgba(pal.red, 1);
-          ctx.lineWidth = 1.8;
-          ctx.beginPath(); ctx.arc(x + s * 0.2, y - s * 0.72, s * 0.55, 0, Math.PI * 2); ctx.stroke();
-        }
-        it.top = y - s - 3;
-        this.hits.push({ id: ev.id, x: x + s * 0.2, y: y + 2, w: Math.max(s, 24), h: Math.max(s + 6, 26) });
-        // 要赶集、有准备事项的：旗边停一辆车，勾掉的箱子装上车，没勾的空着虚框（只画视角附近的）
-        const prep = ev.prep ?? [];
-        if (kindOf(ev) === 'meet' && prep.length && Math.abs(it.h - T) < 36) {
-          const cs = cartSize(RH), done = prep.filter(p => p.done).length;
-          // 停在旗的右边：会前农夫总在旗的左边（更早的钟点），不会压在一起；不出这块地
-          const cx = Math.min(x + s * 0.6 + cs * 0.55, it.right - cs * 0.55);
-          cart(ctx, cx, y, cs, done, prep.length - done, pal);
-          keep.push({ x0: cx - cs * 0.6, x1: cx + cs, y0: y - cs * 1.3, y1: y });
-          this.hits.push({ id: ev.id, x: cx, y: y + 2, w: Math.max(cs * 1.6, 24), h: Math.max(cs * 1.3, 24) });
-        }
+type Growth = 'till' | 'seed' | 'sprout' | 'young' | 'ripen' | 'ripe' | 'flower';
+
+/** 这一垄做过的部分长到哪一步：麦田按耕地的进度，菜园两周才冒芽 */
+function growth(kind: FieldKind, when: 'past' | 'today' | 'future', age: number): Growth {
+  if (kind === 'focus') {
+    if (when !== 'past') return 'till';
+    return (['seed', 'sprout', 'young', 'ripen', 'ripe'] as const)[stageOf(age)];
+  }
+  if (when !== 'past') return 'seed';
+  return (['seed', 'sprout', 'young', 'flower'] as const)[learnStageOf(age)];
+}
+
+/** 每一步的底色 */
+const BASE: Record<Growth, (p: Pal) => RGB> = {
+  till: p => p.soil, seed: p => p.soil, sprout: p => p.young, young: p => p.young,
+  ripen: p => p.ripen, ripe: p => p.ripe, flower: p => p.young,
+};
+
+/** 每一步的纹样：黄垄、白种子、成对的叶子、橙色人字穗、向日葵 */
+function pattern(g: CanvasRenderingContext2D, x0: number, x1: number, h: number, st: Growth, k: number, pal: Pal) {
+  const cy = h / 2;
+  if (st === 'till') {
+    g.fillStyle = rgba(pal.furrow, 1);
+    for (let x = x0 + 2; x < x1 - 2; x += 5 * k) g.fillRect(x, cy - 0.8 * k, 3 * k, 1.6 * k);
+  } else if (st === 'seed') {
+    g.fillStyle = rgba(pal.seed, 1);
+    for (let x = x0 + 2; x < x1 - 1; x += 4 * k) g.fillRect(x, cy - 0.7 * k, 1.5 * k, 1.5 * k);
+  } else if (st === 'sprout' || st === 'young') {
+    leaves(g, x0, x1, cy, (st === 'sprout' ? 0.6 : 1) * k, k, pal);
+  } else if (st === 'flower') {
+    const fr = Math.max(1.8, h * 0.28);
+    for (let x = x0 + fr + 1; x < x1 - fr * 0.6; x += fr * 2.8) {
+      g.fillStyle = rgba(pal.yellow, 1);
+      for (let i = 0; i < 8; i++) {
+        const t = (i / 8) * Math.PI * 2;
+        g.beginPath(); g.ellipse(x + Math.cos(t) * fr * 0.7, cy + Math.sin(t) * fr * 0.7, fr * 0.42, fr * 0.2, t, 0, Math.PI * 2); g.fill();
       }
-      // 只给视角前后一天半里的写字；进行中的写在农夫头顶
-      if (ev.state !== 'live' && Math.abs(it.h - T) < 36) labels.push(it);
+      g.fillStyle = rgba(pal.soil, 1);
+      g.beginPath(); g.arc(x, cy, fr * 0.42, 0, Math.PI * 2); g.fill();
     }
-
-    // 标签：离视角近的优先，最多三个，彼此不重叠，也不压住农夫
-    labels.sort((a, b) => Math.abs(a.h - T) - Math.abs(b.h - T));
-    const taken = [...reserved, ...keep];
-    let shown = 0;
-    for (const it of labels) {
-      if (shown >= 3) break;
-      const { ev, x } = it;
-      const sub = `${JOB[kindOf(ev)]} · ${subLabel(ev)}`;
-      ctx.font = `700 12px ${SANS}`;
-      let half = ctx.measureText(ev.title).width / 2;
-      ctx.font = `500 10.5px ${SANS}`;
-      half = Math.max(half, ctx.measureText(sub).width / 2) + 6;
-      const lx = clamp(x, half + 4, W - half - 4);
-      const box: Box = { x0: lx - half, x1: lx + half, y0: it.top - 31, y1: it.top + 2 };
-      if (box.y0 < this.SKY + 4 || box.y1 > this.VIL - 4) continue;
-      if (taken.some(b => overlaps(b, box))) continue;
-      taken.push(box);
-      shown++;
-      tag(ctx, box.x0, box.y0, half * 2, 32, light ? [255, 248, 232] : [40, 30, 60], pal, ev.state === 'ended' ? 0.85 : 1);
-      ctx.save();
-      ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-      ctx.fillStyle = light ? rgba(pal.ink, 1) : 'rgba(255,236,190,1)';
-      ctx.font = `700 12px ${SANS}`;
-      ctx.fillText(ev.title, lx, it.top - 14);
-      ctx.font = `500 10.5px ${SANS}`;
-      ctx.fillStyle = light ? rgba(pal.ink, 0.72) : 'rgba(255,236,190,.75)';
-      ctx.fillText(sub, lx, it.top);
-      ctx.restore();
+  } else {
+    g.strokeStyle = rgba(pal.ear, 1);
+    g.lineWidth = k;
+    const e = 1.8 * k;
+    for (let x = x0 + 3; x < x1 - 1; x += 5 * k) {
+      g.beginPath(); g.moveTo(x - e, cy + e); g.lineTo(x, cy - e * 0.5); g.lineTo(x + e, cy + e); g.stroke();
     }
   }
 }
 
-/* ---------- 一块地 ---------- */
+function roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  g.beginPath();
+  if (g.roundRect) g.roundRect(x, y, w, h, r); else g.rect(x, y, w, h);
+}
+
+/**
+ * 每块田每天的那一垄：专注、学习的日程按天拆开（跨午夜的分到两天，全天日程不算），
+ * 同一天按开始时间排好，叠在前面日程上的部分不重复算；做了多少按“现在”量。
+ */
+function segments(events: EventView[], nowH: number): Map<string, Seg[]> {
+  const raw = new Map<string, { ev: EventView; a: number; b: number }[]>();
+  for (const ev of events) {
+    const kind = kindOf(ev);
+    if ((kind !== 'focus' && kind !== 'learn') || isAllDay(ev.start, ev.end)) continue;
+    const s = localHours(ev.start), e = localHours(ev.end);
+    for (let d = dayOf(s); d * 24 < e; d++) {
+      const key = `${kind}|${d}`;
+      let list = raw.get(key);
+      if (!list) raw.set(key, (list = []));
+      list.push({ ev, a: Math.max(s, d * 24), b: Math.min(e, (d + 1) * 24) });
+    }
+  }
+  const out = new Map<string, Seg[]>();
+  for (const [key, list] of raw) {
+    list.sort((p, q) => p.a - q.a);
+    let cursor = -Infinity;
+    const segs: Seg[] = [];
+    for (const { ev, a, b } of list) {
+      const from = Math.max(a, cursor);
+      const hours = Math.max(0, b - from);
+      cursor = Math.max(cursor, b);
+      if (hours < 1 / 60) continue;
+      segs.push({ ev, hours, done: clamp(nowH - from, 0, hours) });
+    }
+    if (segs.length) out.set(key, segs);
+  }
+  return out;
+}
+
+/**
+ * 果园：每种习惯（按标题）一棵树，按近两个月做完几次长；今天正在做或还要做的也先种一棵树苗。
+ * 浇得多的排前面。点树打开最近做的那次，没做过就打开接下来那次。
+ */
+function orchardOf(events: EventView[], now: number): Orchard[] {
+  const trees = new Map<string, { times: number; last?: EventView; next?: EventView }>();
+  for (const ev of events) {
+    if (kindOf(ev) !== 'habit') continue;
+    const t = ev.title.trim();
+    if (ev.state === 'ended') {
+      if (ev.end < now - 60 * DAY) continue;
+      const o = trees.get(t) ?? { times: 0 };
+      o.times++;
+      if (!o.last || ev.end > o.last.end) o.last = ev;
+      trees.set(t, o);
+    } else if (ev.start - now < DAY) {
+      const o = trees.get(t) ?? { times: 0 };
+      if (!o.next || ev.start < o.next.start) o.next = ev;
+      trees.set(t, o);
+    }
+  }
+  return [...trees].map(([title, o]) => ({
+    title, times: o.times,
+    stage: Math.max(0, TREE_AT.filter(k => o.times >= k).length - 1),
+    id: (o.last ?? o.next)!.id,
+  })).sort((a, b) => b.times - a.times || a.title.localeCompare(b.title));
+}
+
+/** 小旗边上写的时间：今天写钟点，明天写“明天”，再远写日期 */
+function whenText(ms: number, nowH: number): string {
+  const d = dayOf(localHours(ms)) - dayOf(nowH);
+  if (d === 0) return fmtTime(ms);
+  if (d === 1) return `明天 ${fmtTime(ms)}`;
+  const date = new Date(ms);
+  return `${date.getMonth() + 1}月${date.getDate()}日`;
+}
+
+/** 太长就截短加省略号 */
+function fitText(ctx: CanvasRenderingContext2D, text: string, max: number, font: string): string {
+  ctx.font = font;
+  if (ctx.measureText(text).width <= max) return text;
+  let t = text;
+  while (t.length > 1 && ctx.measureText(t + '…').width > max) t = t.slice(0, -1);
+  return t + '…';
+}
+
+/** 地里的小字：粗一点，外面描一圈底色，压在什么上面都看得清 */
+function small(ctx: CanvasRenderingContext2D, x: number, y: number, text: string, align: CanvasTextAlign, pal: Pal, light: boolean) {
+  ctx.save();
+  ctx.font = `700 11px ${SANS}`;
+  ctx.textAlign = align; ctx.textBaseline = 'middle';
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = light ? 'rgba(255,248,232,.95)' : 'rgba(40,30,60,.95)';
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = light ? rgba(pal.ink, 1) : 'rgba(255,236,190,1)';
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+/** 地头的木牌：两根小木桩挑一块牌子 */
+function sign(ctx: CanvasRenderingContext2D, x: number, y: number, text: string, pal: Pal) {
+  ctx.save();
+  ctx.font = `700 12px ${SANS}`;
+  const w = ctx.measureText(text).width + 14;
+  ctx.fillStyle = rgba(pal.trunk, 1);
+  ctx.fillRect(x + 8, y + 14, 3, 7); ctx.fillRect(x + w - 11, y + 14, 3, 7);
+  roundRect(ctx, x, y - 2, w, 18, 4);
+  ctx.fillStyle = 'rgba(201,161,91,1)'; ctx.fill();
+  ctx.strokeStyle = rgba(pal.ink, 1); ctx.lineWidth = 1.3; ctx.stroke();
+  ctx.fillStyle = 'rgba(36,20,12,1)';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText(text, x + 7, y + 7.5);
+  ctx.restore();
+}
+
+/** 垄右头的日子小牌（右边对齐到 x）：今天是红的 */
+function pill(ctx: CanvasRenderingContext2D, right: number, yc: number, text: string, hot: boolean, pal: Pal, light: boolean) {
+  ctx.save();
+  ctx.font = `700 10px ${SANS}`;
+  const w = ctx.measureText(text).width + 10, x = right - w;
+  roundRect(ctx, x, yc - 7, w, 14, 7);
+  ctx.fillStyle = hot ? rgba(pal.red, 1) : light ? 'rgba(255,248,232,1)' : 'rgba(40,30,60,1)';
+  ctx.fill();
+  ctx.strokeStyle = rgba(pal.ink, 1); ctx.lineWidth = 1; ctx.stroke();
+  ctx.fillStyle = hot ? 'rgba(255,255,255,1)' : light ? rgba(pal.ink, 1) : 'rgba(255,236,190,1)';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText(text, x + 5, yc + 0.5);
+  ctx.restore();
+}
+
+/** 仓房：白墙草顶，门口堆着 n 篮带回来的货（最多画 9 篮，三层） */
+function barn(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, n: number, pal: Pal) {
+  const ink = rgba(pal.ink, 1);
+  const w = s, h = s * 0.55;
+  ctx.save();
+  ctx.lineWidth = 1.5; ctx.strokeStyle = ink;
+  ctx.fillStyle = rgba(pal.wall, 1);
+  ctx.fillRect(x - w / 2, y - h, w, h); ctx.strokeRect(x - w / 2, y - h, w, h);
+  ctx.beginPath(); ctx.moveTo(x - w / 2 - 6, y - h); ctx.lineTo(x, y - h - s * 0.4); ctx.lineTo(x + w / 2 + 6, y - h); ctx.closePath();
+  ctx.fillStyle = 'rgba(201,161,91,1)'; ctx.fill(); ctx.stroke();
+  ctx.fillStyle = rgba(pal.door, 1);
+  ctx.fillRect(x - w * 0.14, y - h * 0.7, w * 0.28, h * 0.7); ctx.strokeRect(x - w * 0.14, y - h * 0.7, w * 0.28, h * 0.7);
+  const bs = s * 0.24;
+  const shown = Math.min(n, 9);
+  for (let i = 0; i < shown; i++) {
+    const row = i < 4 ? 0 : i < 7 ? 1 : 2, k = row === 0 ? i : row === 1 ? i - 4 : i - 7;
+    const per = row === 0 ? 4 : row === 1 ? 3 : 2;
+    basket(ctx, x + (k - (per - 1) / 2) * bs * 1.05, y - row * bs * 0.62, bs, 2, pal);
+  }
+  ctx.restore();
+}
 
 /** 手画似的歪一点的方块 */
 function wobble(g: CanvasRenderingContext2D, w: number, h: number, seed: number, amp: number) {
@@ -867,175 +1024,6 @@ function wobble(g: CanvasRenderingContext2D, w: number, h: number, seed: number,
   g.closePath();
 }
 
-/**
- * 画一块地（原点在地的左上角）。when：以后、今天、过去；age：这一天过去了几天。
- * 做过的农活各占横向几段：先画车道（赶集），再画播种、耕地，最后点上浇树的水滴；
- * 没动过的地，以后的是浅杏色，过去的长草开花。
- */
-function paintPlot(
-  g: CanvasRenderingContext2D, pw: number, ph: number, d: number, work: Work,
-  when: 'future' | 'today' | 'past', age: number, pal: Pal, light: boolean, compact = false,
-) {
-  const seed = d * 31 + 7;
-  const ink = rgba(pal.ink, 1);
-  const past = when === 'past';
-  const used = [...work.focus, ...work.learn, ...work.meet];
-  const free = (x: number) => !used.some(([a, b]) => x > a * pw - 3 && x < b * pw + 3);
-  // 纹样的大小跟着地的高走（一长条地很宽，横向的多少按宽算）
-  const k = clamp(ph / 50, 1, 2);
-  const wide = pw / ph;
-  wobble(g, pw, ph, seed, ph * 0.05);
-  g.fillStyle = rgba(past ? pal.fallow : pal.bare, 1);
-  g.fill();
-  g.save();
-  g.clip();
-  const r = rng(seed);
-  if (past) {
-    // 空着的地长草：人字纹越来越密，过两天开几朵小花
-    const n = Math.round((4 + 10 * smooth(0, 6, age)) * wide * 0.8);
-    g.strokeStyle = rgba(pal.weed, 1);
-    g.lineWidth = 1.1 * k;
-    const s = ph * 0.05;
-    for (let i = 0; i < n; i++) {
-      const x = r() * pw, y = ph * 0.22 + r() * ph * 0.74;
-      if (!free(x)) continue;
-      g.beginPath(); g.moveTo(x - s, y - s * 1.2); g.lineTo(x, y); g.lineTo(x + s, y - s * 1.2); g.stroke();
-    }
-    if (age > 2) {
-      for (let i = 0; i < Math.round(3 * wide * 0.7); i++) {
-        const x = r() * pw, y = ph * 0.25 + r() * ph * 0.7;
-        if (!free(x)) continue;
-        g.fillStyle = i % 2 ? 'rgba(255,255,255,.95)' : light ? 'rgba(240,106,168,1)' : 'rgba(190,96,140,1)';
-        g.beginPath(); g.arc(x, y, Math.max(1.2, ph * 0.032), 0, Math.PI * 2); g.fill();
-      }
-    }
-  } else {
-    // 还没动的地：底边一排淡淡的点
-    g.fillStyle = 'rgba(255,255,255,.4)';
-    const dots = Math.max(8, Math.round(pw / 12));
-    for (let i = 0; i < dots; i++) { g.beginPath(); g.arc(4 + (i * (pw - 8)) / (dots - 1), ph - 4 * k, 0.9 * k, 0, Math.PI * 2); g.fill(); }
-  }
-
-  const rows = 6;
-  const rowY = (j: number) => ph * 0.24 + (j * ph * 0.7) / rows;
-  const edges = (sx: number, ex: number) => {
-    g.strokeStyle = ink;
-    g.lineWidth = 0.8;
-    g.beginPath(); g.moveTo(sx, 0); g.lineTo(sx, ph); g.moveTo(ex, 0); g.lineTo(ex, ph); g.stroke();
-  };
-
-  // 赶集：地没动，压出一条土车道，两道车辙
-  for (const [a, b] of work.meet) {
-    const sx = a * pw, ex = b * pw, w = ex - sx;
-    g.fillStyle = rgba(pal.path, 1);
-    g.fillRect(sx, 0, w, ph);
-    g.strokeStyle = rgba(pal.rut, 1);
-    g.lineWidth = 1.2 * k;
-    g.setLineDash([3 * k, 2 * k]);
-    for (const t of w > 8 * k ? [0.3, 0.7] : [0.5]) { g.beginPath(); g.moveTo(sx + w * t, 0); g.lineTo(sx + w * t, ph); g.stroke(); }
-    g.setLineDash([]);
-    edges(sx, ex);
-  }
-
-  // 播种：撒下白种子；两周后才冒芽，再长成青苗，三周多开出向日葵
-  const ls = past ? learnStageOf(age) : 0;
-  for (const [a, b] of work.learn) {
-    const sx = a * pw, ex = b * pw;
-    g.fillStyle = rgba(ls <= 1 ? pal.soil : pal.young, 1);
-    g.fillRect(sx, 0, ex - sx, ph);
-    for (let j = 0; j < rows; j++) {
-      const y = rowY(j);
-      if (ls === 0) {
-        g.fillStyle = rgba(pal.seed, 1);
-        for (let x = sx + 2; x < ex - 1; x += 4 * k) g.fillRect(x, y, 1.4 * k, 1.4 * k);
-      } else if (ls <= 2) {
-        leaves(g, sx, ex, y, (ls === 1 ? 0.55 : 1) * k, k, pal);
-      }
-    }
-    if (ls === 3) {
-      // 向日葵：一圈黄花瓣，棕色的心
-      const fr = Math.max(2.4, ph * 0.07);
-      for (let j = 0; j < 3; j++) {
-        const y = ph * 0.32 + j * ph * 0.24;
-        for (let x = sx + fr + 1 + (j % 2) * fr; x < ex - fr * 0.6; x += fr * 2.6) {
-          g.fillStyle = rgba(pal.yellow, 1);
-          for (let k = 0; k < 8; k++) {
-            const t = (k / 8) * Math.PI * 2;
-            g.beginPath(); g.ellipse(x + Math.cos(t) * fr * 0.7, y + Math.sin(t) * fr * 0.7, fr * 0.42, fr * 0.2, t, 0, Math.PI * 2); g.fill();
-          }
-          g.fillStyle = rgba(pal.soil, 1);
-          g.beginPath(); g.arc(x, y, fr * 0.42, 0, Math.PI * 2); g.fill();
-        }
-      }
-    }
-    edges(sx, ex);
-  }
-
-  // 耕地：今天是红土黄垄，撒了种的是白点，过几天冒芽、长成青苗，两周左右熟成金黄
-  const st = when === 'today' ? -1 : past ? stageOf(age) : -1;
-  for (const [a, b] of work.focus) {
-    const sx = a * pw, ex = b * pw;
-    const tilled = st <= 0;
-    g.fillStyle = rgba(tilled ? pal.soil : st <= 2 ? pal.young : st === 3 ? pal.ripen : pal.ripe, 1);
-    g.fillRect(sx, 0, ex - sx, ph);
-    for (let j = 0; j < rows; j++) {
-      const y = rowY(j);
-      if (tilled) {
-        const dot = st === 0;
-        g.fillStyle = rgba(dot ? pal.seed : pal.furrow, 1);
-        for (let x = sx + 2; x < ex - 1; x += 4 * k) g.fillRect(x, y, (dot ? 1.4 : 2.4) * k, (dot ? 1.4 : 1.3) * k);
-      } else if (st <= 2) {
-        leaves(g, sx, ex, y, (st === 1 ? 0.6 : 1) * k, k, pal);
-      } else {
-        // 穗子：一排排人字
-        g.strokeStyle = rgba(pal.ear, 1);
-        g.lineWidth = k;
-        const e = 1.6 * k;
-        for (let x = sx + 2.5; x < ex - 1; x += 4.5 * k) {
-          g.beginPath(); g.moveTo(x - e, y + e); g.lineTo(x, y); g.lineTo(x + e, y + e); g.stroke();
-        }
-      }
-    }
-    edges(sx, ex);
-  }
-
-  // 浇树：习惯一般很短，不占一条地，只在那个钟点留一滴水
-  for (const [a, b] of work.habit) {
-    const x = ((a + b) / 2) * pw, y = ph * 0.6, q = dropSize(ph);
-    g.fillStyle = rgba(mixc(pal.water, [255, 255, 255], 0.35), 1);
-    g.beginPath(); g.ellipse(x, y + q * 1.1, q * 1.1, q * 0.35, 0, 0, Math.PI * 2); g.fill();
-    g.beginPath();
-    g.moveTo(x, y - q * 1.3);
-    g.bezierCurveTo(x + q * 0.9, y - q * 0.2, x + q * 0.7, y + q * 0.7, x, y + q * 0.7);
-    g.bezierCurveTo(x - q * 0.7, y + q * 0.7, x - q * 0.9, y - q * 0.2, x, y - q * 1.3);
-    g.fillStyle = rgba(pal.water, 1);
-    g.fill();
-    g.strokeStyle = ink; g.lineWidth = 1; g.stroke();
-  }
-  g.restore();
-
-  wobble(g, pw, ph, seed, ph * 0.05);
-  g.strokeStyle = ink;
-  g.lineWidth = clamp(ph * 0.03, 1.4, 2.4);
-  g.stroke();
-
-  // 日子：左上角一块小牌子写几月几日周几，今天是红牌、前面加“今天”；回望的小格子只写几号（一号写月份）
-  const today = when === 'today';
-  const text = compact ? dayNumber(d) : dayText(d, today);
-  const { br, tw } = compact ? badgeSize(g, text, ph * 0.75) : badgeSize(g, text, ph);
-  g.beginPath();
-  if (g.roundRect) g.roundRect(2, 2, tw, br * 2, br); else g.rect(2, 2, tw, br * 2);
-  g.fillStyle = today ? rgba(pal.red, 1) : rgba(pal.badge, 1);
-  g.fill();
-  g.lineWidth = 1;
-  g.strokeStyle = ink;
-  g.stroke();
-  g.fillStyle = today ? 'rgba(255,255,255,1)' : ink;
-  g.textAlign = 'center';
-  g.textBaseline = 'middle';
-  g.fillText(text, 2 + tw / 2, 2 + br + 0.5);
-}
-
 /** 一排成对的叶子（芽和苗）。k：叶子多大；step：间距按多大算 */
 function leaves(g: CanvasRenderingContext2D, sx: number, ex: number, y: number, k: number, step: number, pal: Pal) {
   g.fillStyle = rgba(pal.leaf, 1);
@@ -1046,13 +1034,6 @@ function leaves(g: CanvasRenderingContext2D, sx: number, ex: number, y: number, 
     g.fill();
   }
 }
-
-/** 一天的农活写成一串，做缓存的键 */
-function workKey(w: Work): string {
-  return (Object.keys(w) as Kind[]).map(k => w[k].map(s => s.map(v => v.toFixed(3)).join('-')).join(',')).join('/');
-}
-
-/* ---------- 点景 ---------- */
 
 /** 果树：树苗两片叶子，小树一团小冠，大树满冠，开花点满粉白的花，结果挂满红果 */
 function fruitTree(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, stage: number, pal: Pal) {
@@ -1129,50 +1110,6 @@ function haystack(ctx: CanvasRenderingContext2D, x: number, y: number, s: number
     ctx.beginPath(); ctx.moveTo(x - half * 0.85, yy); ctx.lineTo(x + half * 0.85, yy); ctx.stroke();
   }
 }
-
-/** 日期牌上的字 */
-function dayText(d: number, today: boolean): string {
-  const date = new Date(noonOf(d));
-  return `${today ? '今天 · ' : ''}${date.getMonth() + 1}月${date.getDate()}日 ${WEEKDAYS[date.getDay()]}`;
-}
-
-/** 回望小格子上的字：几号，一号写月份 */
-function dayNumber(d: number): string {
-  const date = new Date(noonOf(d));
-  return date.getDate() === 1 ? `${date.getMonth() + 1}月` : String(date.getDate());
-}
-
-/** 日期牌的半高和宽（会顺手把字体设好） */
-function badgeSize(g: CanvasRenderingContext2D, text: string, ph: number) {
-  const br = clamp(ph * 0.1, 7, 10);
-  g.font = `700 ${br * 1.15}px ${SANS}`;
-  return { br, tw: Math.max(br * 2, g.measureText(text).width + br * 0.8) };
-}
-
-/** 浇树留下的那滴水多大 */
-const dropSize = (ph: number) => Math.max(3, ph * 0.08);
-
-/** 周一和周日之间的一排小灌木：圆圆的，点几个浅绿点 */
-function hedge(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, gap: number, pal: Pal) {
-  const r = gap * 0.85, n = Math.floor(w / (r * 2.6));
-  ctx.lineWidth = 1.1;
-  ctx.strokeStyle = rgba(pal.ink, 1);
-  for (let i = 0; i < n; i++) {
-    const cx = x + (i + 0.5) * (w / n);
-    ctx.fillStyle = rgba(pal.crown, 1);
-    ctx.beginPath(); ctx.arc(cx, y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = rgba(pal.dot, 1);
-    ctx.beginPath(); ctx.arc(cx - r * 0.3, y - r * 0.25, r * 0.22, 0, Math.PI * 2); ctx.fill();
-  }
-}
-
-/** 车、摊子的大小（跟着一行的高） */
-const cartSize = (rh: number) => clamp(rh * 0.36, 11, 24);
-const stallSize = (rh: number) => clamp(rh * 0.85, 24, 56);
-/** 地里的农夫多高 */
-const farmerSize = (rh: number) => clamp(rh * 0.62, 30, 66);
-/** 摊子的中间：开会那个钟点稍靠左；夜里的会挤在地的右头，要给摊子和站在右边的农夫留出地方 */
-const stallX = (x: number, right: number, rh: number) => Math.min(x - stallSize(rh) * 0.1, right - stallSize(rh) * 0.5 - farmerSize(rh) * 0.45);
 
 /**
  * 独轮车：木车斗、一个轮子、车把。车斗上码箱子（三只一层）：先是装好的 loaded 只，
@@ -1479,53 +1416,6 @@ function folkFarmer(ctx: CanvasRenderingContext2D, x: number, y: number, s: numb
     ctx.beginPath(); ctx.ellipse(bx, bt, bw * 0.45, bw * 0.12, 0, 0, Math.PI * 2); ctx.fill();
   }
   ctx.restore();
-}
-
-/**
- * 每天做过的农活：日程占着、而且已经过去的时段（到 nowH 为止），按类型换成地里横向的几段（0–1）。
- * 同一类型叠在一起的只算一次；全天日程不算；跨午夜的拆到两天里。
- */
-function tillage(events: EventView[], nowH: number): Map<number, Work> {
-  const raw = new Map<number, Work>();
-  for (const ev of events) {
-    if (isAllDay(ev.start, ev.end)) continue;
-    const s = localHours(ev.start), e = Math.min(localHours(ev.end), nowH);
-    if (e <= s) continue;
-    const kind = kindOf(ev);
-    for (let d = dayOf(s); d * 24 < e; d++) {
-      const a = uIn(Math.max(s, d * 24) - d * 24), b = uIn(Math.min(e, (d + 1) * 24) - d * 24);
-      // 浇树只留一滴水，再短也要记下；别的农活太短（夜里挤在两头）就不画
-      if (b - a < 1e-3 && kind !== 'habit') continue;
-      let work = raw.get(d);
-      if (!work) raw.set(d, (work = { focus: [], learn: [], meet: [], habit: [] }));
-      work[kind].push([a, b]);
-    }
-  }
-  for (const work of raw.values()) {
-    for (const k of Object.keys(work) as Kind[]) {
-      const list = work[k].sort((p, q) => p[0] - q[0]);
-      const merged: Spans = [];
-      for (const [a, b] of list) {
-        const last = merged[merged.length - 1];
-        if (last && a <= last[1]) last[1] = Math.max(last[1], b);
-        else merged.push([a, b]);
-      }
-      work[k] = merged;
-    }
-  }
-  return raw;
-}
-
-/** 果园：每种习惯（按标题）一棵树，按近两个月做完了几次长大；浇得多的排前面 */
-function orchardOf(events: EventView[], now: number): Orchard[] {
-  const times = new Map<string, number>();
-  for (const ev of events) {
-    if (ev.state !== 'ended' || ev.end < now - 60 * DAY || kindOf(ev) !== 'habit') continue;
-    const t = ev.title.trim();
-    times.set(t, (times.get(t) ?? 0) + 1);
-  }
-  return [...times].map(([title, n]) => ({ title, times: n, stage: TREE_AT.filter(k => n >= k).length - 1 }))
-    .sort((a, b) => b.times - a.times || a.title.localeCompare(b.title));
 }
 
 /** 第 d 天的中午（毫秒），用来取日期 */

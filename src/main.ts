@@ -139,7 +139,7 @@ function openGoal() {
 document.getElementById('goal-btn')!.addEventListener('click', openGoal);
 
 /* ---------- 回望（登山、农场） ----------
- * 拉远看全貌（登山是整座山，农场是近五周的月历）。拉远时视角先回到“现在”，期间不能拖。
+ * 拉远看全貌（登山是整座山，农场是两块田拉长成五周）。拉远时视角先回到“现在”，期间不能拖。
  */
 let overview = false;
 const overviewBtn = document.getElementById('overview') as HTMLButtonElement;
