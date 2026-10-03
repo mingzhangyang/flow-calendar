@@ -1,8 +1,9 @@
 import type { World } from '../world';
-import type { EventView, Frame } from '../../model/types';
+import type { EventView, Frame, Kind } from '../../model/types';
+import { kindOf } from '../../model/kind';
 import { DAY, HOUR, MINUTE, fmtDay, fmtTime, isAllDay, localHours } from '../../model/time';
 import { daylightAt } from '../../model/daylight';
-import { type RGB, SANS, clamp, hashStr, mixc, mod, rgba, rng, smooth } from '../hike/paint';
+import { type RGB, SANS, clamp, mixc, mod, rgba, rng, smooth } from '../hike/paint';
 import { subLabel } from '../climb';
 
 /**
@@ -11,9 +12,13 @@ import { subLabel } from '../climb';
  * 一天是一块地，一周一行（周一到周日从左到右），往上是以后的周，往下是过去的周。
  * 一块地里横向是这一天的钟点：6 点在左边、22 点在右边，夜里的日程挤在两头。
  *
- * 做过的事留在地里：日程占着、已经过去的时段翻成垄（叠在一起只算一次，全天日程不算），
- * 过几天冒芽、长成青苗，两周左右熟成金黄；没做事的日子，地空着长草开花。
- * 还没到的日程是插在地里的小旗。农夫在今天的地里随钟点走，忙时锄地，夜里回家坐在门口。
+ * 做过的事留在地里，按类型（kind.ts）是不同的农活，都只算已经过去的时段：
+ *   专注 = 耕地：翻成垄，过几天冒芽、长成青苗，两周左右熟成金黄；
+ *   学习 = 播种：撒下种子，两周后才冒芽，三周多开出向日葵；
+ *   会议 = 赶集：地没动，压出一条车道；
+ *   习惯 = 浇果树：地里留一滴水，村子里那棵树（每种习惯一棵）按近两个月浇过几次长大、开花、结果。
+ * 没做事的日子，地空着长草开花。还没到的日程是插在地里的小旗（颜色按类型）。
+ * 农夫在今天的地里随钟点走，按手上的农活锄地、撒种、提水，夜里回家坐在门口。
  *
  * 画风：户县农民画——大块饱和的平涂、粗墨线、满纹样，不讲透视。
  * 上面一条天（日月、卷云、圆圆的小山），下面一条村子（红瓦房、粮仓、树、鸡），都钉在屏幕上；
@@ -33,6 +38,7 @@ interface Pal {
   young: RGB; leaf: RGB; ripen: RGB; ripe: RGB; ear: RGB; fallow: RGB; weed: RGB;
   ink: RGB; badge: RGB; red: RGB; yellow: RGB; hill: RGB; hill2: RGB; hillDot: RGB;
   path: RGB; wall: RGB; roof: RGB; roofLine: RGB; window: RGB; door: RGB; trunk: RGB; crown: RGB;
+  water: RGB; rut: RGB;
 }
 const DAY_PAL: Pal = {
   grass: [47, 163, 74], dot: [126, 211, 106], bare: [244, 195, 142], soil: [140, 52, 23], furrow: [247, 197, 49],
@@ -41,6 +47,7 @@ const DAY_PAL: Pal = {
   red: [227, 38, 30], yellow: [247, 197, 49], hill: [36, 140, 66], hill2: [92, 182, 74], hillDot: [190, 236, 120],
   path: [240, 206, 150], wall: [255, 248, 232], roof: [217, 48, 31], roofLine: [140, 30, 16], window: [42, 79, 158],
   door: [140, 52, 23], trunk: [140, 52, 23], crown: [30, 138, 67],
+  water: [60, 140, 224], rut: [176, 128, 78],
 };
 /** 夜里：还是那几种颜色，整体压暗，窗子亮起来 */
 const NIGHT_PAL: Pal = {
@@ -50,15 +57,17 @@ const NIGHT_PAL: Pal = {
   red: [220, 70, 56], yellow: [246, 212, 96], hill: [22, 78, 52], hill2: [40, 104, 62], hillDot: [80, 146, 88],
   path: [120, 100, 82], wall: [176, 170, 160], roof: [150, 44, 34], roofLine: [90, 24, 16], window: [255, 214, 90],
   door: [86, 34, 18], trunk: [86, 34, 18], crown: [20, 92, 52],
+  water: [52, 100, 170], rut: [96, 70, 50],
 };
 function palAt(daylight: number): Pal {
   const out = {} as Record<keyof Pal, RGB>;
   for (const k of Object.keys(DAY_PAL) as (keyof Pal)[]) out[k] = mixc(NIGHT_PAL[k], DAY_PAL[k], daylight);
   return out;
 }
-/** 日程的颜色：大红、钴蓝、明黄、桃红（和别的模式用同一个序号，一个日程走到哪儿都是同一种颜色） */
-const FLAG: RGB[] = [[227, 38, 30], [29, 95, 204], [242, 183, 5], [214, 60, 142]];
-const flagOf = (title: string) => FLAG[hashStr(title) % FLAG.length];
+/** 小旗和彩珠的颜色按类型：耕地大红、播种明黄、赶集钴蓝、浇树桃红 */
+const FLAG: Record<Kind, RGB> = { focus: [227, 38, 30], learn: [242, 183, 5], meet: [29, 95, 204], habit: [214, 60, 142] };
+/** 农活的名字 */
+const JOB: Record<Kind, string> = { focus: '耕地', learn: '播种', meet: '赶集', habit: '浇树' };
 
 /** 天色：白天天蓝，早晚橙红，夜里靛蓝 */
 const SKY: [number, RGB][] = [
@@ -87,11 +96,21 @@ const colOf = (d: number) => mod(d + 3, 7);
 /** 一块地里，某个钟点在横向的位置（0–1） */
 const uIn = (hod: number) => (clamp(hod, DAY0, DAY1) - DAY0) / (DAY1 - DAY0);
 
-/** 一天里翻过的地：横向占的几段（0–1，已合并） */
+/** 一天里某种农活在横向占的几段（0–1，已合并） */
 type Spans = [number, number][];
+/** 一天里做过的农活，按类型分开 */
+type Work = Record<Kind, Spans>;
+const NO_WORK: Work = { focus: [], learn: [], meet: [], habit: [] };
 
-/** 过去的日子长到哪一步：0 种子 1 冒芽 2 青苗 3 转黄 4 熟了 */
+/** 耕过的地长到哪一步：0 种子 1 冒芽 2 青苗 3 转黄 4 熟了 */
 const stageOf = (age: number) => (age < 1 ? 0 : age < 3 ? 1 : age < 8 ? 2 : age < 15 ? 3 : 4);
+/** 播的种长到哪一步：0 种子（两周不见动静）1 冒芽 2 青苗 3 开花 */
+const learnStageOf = (age: number) => (age < 14 ? 0 : age < 18 ? 1 : age < 24 ? 2 : 3);
+
+/** 果树：近两个月浇过几次 → 树苗、小树、大树、开花、结果 */
+const TREE_AT = [1, 3, 7, 14, 21];
+const TREE_NAMES = ['树苗', '小树', '大树', '开花', '结果'];
+interface Orchard { title: string; times: number; stage: number }
 
 export class FarmWorld implements World {
   readonly id = 'farm';
@@ -106,7 +125,9 @@ export class FarmWorld implements World {
   /** 视角所在的行（连续） */
   private vc = 0;
   private hits: Hit[] = [];
-  private tilled = new Map<number, Spans>();
+  private tilled = new Map<number, Work>();
+  /** 每种习惯一棵果树 */
+  private orchard: Orchard[] = [];
   /** 画好的地块：内容和光没变就直接贴 */
   private plots = new Map<string, HTMLCanvasElement>();
   private grassTile: { key: string; pattern: CanvasPattern } | null = null;
@@ -135,6 +156,7 @@ export class FarmWorld implements World {
     const T = localHours(f.view), nowH = localHours(f.now);
     this.vc = (T / 24 + 3) / 7 - 0.5;
     this.tilled = tillage(f.events, nowH);
+    this.orchard = orchardOf(f.events, f.now);
     const hod = mod(T, 24);
     const daylight = daylightAt(f.view);
     const pal = palAt(daylight);
@@ -184,12 +206,15 @@ export class FarmWorld implements World {
   describe(f: Frame): string {
     const nowH = localHours(f.now);
     const d0 = dayOf(nowH) - colOf(dayOf(nowH));
-    let hours = 0;
-    for (let d = d0; d <= dayOf(nowH); d++) {
-      for (const [a, b] of this.tilled.get(d) ?? []) hours += (b - a) * (DAY1 - DAY0);
-    }
-    return `一天是一块地，一周一行，往上是以后的日子。这周已经翻了约 ${Math.round(hours)} 小时的地。`
-      + '做过的事翻成垄，过几天长出庄稼；没做事的日子，地空着长草。';
+    const hours = (k: Kind) => {
+      let n = 0;
+      for (let d = d0; d <= dayOf(nowH); d++) for (const [a, b] of this.tilled.get(d)?.[k] ?? []) n += (b - a) * (DAY1 - DAY0);
+      return Math.round(n);
+    };
+    let text = `一天是一块地，一周一行，往上是以后的日子。这周耕地约 ${hours('focus')} 小时，播种约 ${hours('learn')} 小时。`
+      + '专注是耕地，两周左右熟成金黄；学习是播种，两周后才发芽；会议是赶集；习惯是浇果树。没做事的日子，地空着长草。';
+    if (this.orchard.length) text += `果园里：${this.orchard.map(o => `${o.title}（${TREE_NAMES[o.stage]}）`).join('、')}。`;
+    return text;
   }
 
   /* ---------- 天 ---------- */
@@ -314,11 +339,12 @@ export class FarmWorld implements World {
       const yTop = this.yAt(w + 1);
       for (let col = 0; col < 7; col++) {
         const d = 7 * w - 3 + col;
-        const spans = d <= today ? this.tilled.get(d) ?? [] : [];
+        const work = d <= today ? this.tilled.get(d) ?? NO_WORK : NO_WORK;
         const age = (nowH - (d + 1) * 24) / 24;
-        const st = d === today ? -1 : d > today ? -2 : stageOf(age);
-        // 长草的多少随日子慢慢变，按天取整就够了
-        const key = `${d}|${st}|${st === 0 || d < today ? Math.min(7, Math.floor(age)) : ''}|${spans.map(s => s.map(v => v.toFixed(3)).join('-')).join(',')}|${lightKey}|${Math.round(pw * dpr)}x${Math.round(ph * dpr)}`;
+        const when = d === today ? 'today' : d > today ? 'future' : 'past';
+        // 长到哪一步、长草的多少都随日子慢慢变，按天取整就够了
+        const grow = when === 'past' ? `${stageOf(age)}.${learnStageOf(age)}.${Math.min(7, Math.floor(age))}` : '';
+        const key = `${d}|${when}|${grow}|${workKey(work)}|${lightKey}|${Math.round(pw * dpr)}x${Math.round(ph * dpr)}`;
         let c = this.plots.get(key);
         if (c) {
           // 最近用过的放到最后，满了从最久没用的删起
@@ -328,7 +354,7 @@ export class FarmWorld implements World {
           c.width = Math.ceil((pw + 2 * pad) * dpr); c.height = Math.ceil((ph + 2 * pad) * dpr);
           const g = c.getContext('2d')!;
           g.setTransform(dpr, 0, 0, dpr, pad * dpr, pad * dpr);
-          paintPlot(g, pw, ph, d, spans, st, age, d === today, pal, daylight >= 0.5);
+          paintPlot(g, pw, ph, d, work, when, age, pal, daylight >= 0.5);
           this.plots.set(key, c);
           if (this.plots.size > 360) this.plots.delete(this.plots.keys().next().value!);
         }
@@ -379,19 +405,26 @@ export class FarmWorld implements World {
     const ground = H - this.insetBottom - bh * 0.18;
     const s = clamp(bh * 0.95, 60, 104);
     // 房子在左中，粮仓在它右边，两头各一棵树；宽屏上多种几棵
-    const hx = W * 0.5 - s * 0.95;
+    // 粮仓在右头（手机上“新建”按钮压着它也不要紧），房子挨着它，左边整片是果园
+    const hx = W - s * 2.25;
     this.house = { x: hx, w: s * 1.15, ground };
     house(ctx, hx, ground, s * 1.15, s * 0.5, pal, 1 - daylight);
-    granary(ctx, hx + s * 1.55, ground, s * 0.5, pal);
-    const trees = Math.max(2, Math.round(W / 220));
-    for (let i = 0; i < trees; i++) {
-      const left = i % 2 === 0, j = Math.floor(i / 2);
-      const x = left ? s * 0.4 + j * s * 0.9 : W - s * 0.4 - j * s * 0.9;
-      if (x > hx - s * 0.3 && x < hx + s * 2) continue;
-      folkTree(ctx, x, ground, s * 0.95, pal);
+    granary(ctx, W - s * 0.5, ground, s * 0.5, pal);
+    hen(ctx, hx + s * 1.33, ground - 2, s * 0.08, pal);
+    // 从左往右一棵挨一棵：先种习惯的果树（浇得多的在前），剩下的空位种普通的树
+    for (let i = 0, x = s * 0.45; x < hx - s * 0.35; i++, x += s * 0.95) {
+      const o = this.orchard[i];
+      // 空位隔一个种一棵普通的树，不排成一道篱笆
+      if (!o) { if ((i - this.orchard.length) % 2 === 0) folkTree(ctx, x, ground, s * 0.95, pal); continue; }
+      fruitTree(ctx, x, ground, s * 0.95, o.stage, pal);
+      // 树下的土路上写是哪种习惯
+      ctx.save();
+      ctx.font = `700 10px ${SANS}`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.fillStyle = rgba(pal.ink, 1);
+      ctx.fillText(o.title.length > 5 ? o.title.slice(0, 4) + '…' : o.title, x, ground + 2);
+      ctx.restore();
     }
-    hen(ctx, hx + s * 2.1, ground - 2, s * 0.09, pal);
-    hen(ctx, hx + s * 2.45, ground, s * 0.08, pal, true);
   }
   /** 房子的位置：夜里农夫坐在门口 */
   private house = { x: 0, w: 0, ground: 0 };
@@ -435,11 +468,12 @@ export class FarmWorld implements World {
       y = this.yAt(w) - RH * 0.16;
       if (y < this.SKY + 10 || y > this.VIL) return [];
       s = clamp(RH * 0.8, 30, 70);
-      folkFarmer(ctx, x, y, s, live ? 'hoe' : 'walk', pal);
+      const pose = !live ? 'walk' : ({ focus: 'hoe', learn: 'sow', habit: 'water', meet: 'walk' } as const)[kindOf(live)];
+      folkFarmer(ctx, x, y, s, pose, pal);
     }
     // 头顶两行字：“现在”和钟点；忙着的时候换成日程的名字和还要准备几项
     const title = live ? `现在 · ${live.title}` : home ? '现在 · 在家歇着' : '现在';
-    const sub = live ? subLabel(live) : `${fmtDay(f.now)} ${fmtTime(f.now)}`;
+    const sub = live ? `${JOB[kindOf(live)]} · ${subLabel(live)}` : `${fmtDay(f.now)} ${fmtTime(f.now)}`;
     const ty = Math.max(this.SKY + 34, y - s - 6);
     ctx.save();
     ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
@@ -500,8 +534,18 @@ export class FarmWorld implements World {
     const labels: Item[] = [];
     for (const it of items) {
       const { ev, x, y } = it;
-      const color = flagOf(ev.title);
-      if (ev.state === 'ended') {
+      const color = FLAG[kindOf(ev)];
+      if (ev.state === 'ended' && kindOf(ev) === 'habit') {
+        // 浇过的树：地里那滴水就是它，点水滴打开；写了结论在旁边盖小红印
+        const q = Math.max(3, pw * 0.08), wy = this.yAt(weekOf(dayOf(it.h)) + 1) + gap + ph * 0.6;
+        if (ev.outcome) {
+          ctx.fillStyle = rgba(pal.red, 1);
+          ctx.fillRect(x + q, wy - q * 1.6, q, q);
+          ctx.strokeStyle = rgba(pal.ink, 1); ctx.lineWidth = 1; ctx.strokeRect(x + q, wy - q * 1.6, q, q);
+        }
+        it.top = wy - q * 1.6;
+        this.hits.push({ id: ev.id, x, y: wy + q * 1.4, w: 24, h: 26 });
+      } else if (ev.state === 'ended') {
         const r = clamp(pw * 0.06, 2, 4.5);
         ctx.fillStyle = rgba(mixc(color, pal.ink, light ? 0 : 0.2), ev.outcome ? 1 : 0.7);
         ctx.beginPath(); ctx.arc(x, y - r, r, 0, Math.PI * 2); ctx.fill();
@@ -545,7 +589,7 @@ export class FarmWorld implements World {
     for (const it of labels) {
       if (shown >= 2) break;
       const { ev, x } = it;
-      const sub = subLabel(ev);
+      const sub = `${JOB[kindOf(ev)]} · ${subLabel(ev)}`;
       ctx.font = `700 12px ${SANS}`;
       let half = ctx.measureText(ev.title).width / 2;
       ctx.font = `500 10.5px ${SANS}`;
@@ -588,22 +632,26 @@ function wobble(g: CanvasRenderingContext2D, w: number, h: number, seed: number,
 }
 
 /**
- * 画一块地（原点在地的左上角）。st：-2 以后的日子，-1 今天，0–4 过去的日子长到哪一步。
- * 翻过的几段按长到哪一步换颜色和纹样；没翻的地，以后的是浅杏色，过去的长草开花。
+ * 画一块地（原点在地的左上角）。when：以后、今天、过去；age：这一天过去了几天。
+ * 做过的农活各占横向几段：先画车道（赶集），再画播种、耕地，最后点上浇树的水滴；
+ * 没动过的地，以后的是浅杏色，过去的长草开花。
  */
 function paintPlot(
-  g: CanvasRenderingContext2D, pw: number, ph: number, d: number, spans: Spans,
-  st: number, age: number, today: boolean, pal: Pal, light: boolean,
+  g: CanvasRenderingContext2D, pw: number, ph: number, d: number, work: Work,
+  when: 'future' | 'today' | 'past', age: number, pal: Pal, light: boolean,
 ) {
   const seed = d * 31 + 7;
   const ink = rgba(pal.ink, 1);
+  const past = when === 'past';
+  const used = [...work.focus, ...work.learn, ...work.meet];
+  const free = (x: number) => !used.some(([a, b]) => x > a * pw - 3 && x < b * pw + 3);
   wobble(g, pw, ph, seed, pw * 0.045);
-  g.fillStyle = rgba(st >= 0 ? pal.fallow : pal.bare, 1);
+  g.fillStyle = rgba(past ? pal.fallow : pal.bare, 1);
   g.fill();
   g.save();
   g.clip();
   const r = rng(seed);
-  if (st >= 0) {
+  if (past) {
     // 空着的地长草：人字纹越来越密，过两天开几朵小花
     const n = Math.round(4 + 10 * smooth(0, 6, age));
     g.strokeStyle = rgba(pal.weed, 1);
@@ -611,13 +659,13 @@ function paintPlot(
     const s = pw * 0.05;
     for (let i = 0; i < n; i++) {
       const x = r() * pw, y = ph * 0.22 + r() * ph * 0.74;
-      if (spans.some(([a, b]) => x > a * pw - 3 && x < b * pw + 3)) continue;
+      if (!free(x)) continue;
       g.beginPath(); g.moveTo(x - s, y - s * 1.2); g.lineTo(x, y); g.lineTo(x + s, y - s * 1.2); g.stroke();
     }
     if (age > 2) {
       for (let i = 0; i < 3; i++) {
         const x = r() * pw, y = ph * 0.25 + r() * ph * 0.7;
-        if (spans.some(([a, b]) => x > a * pw - 3 && x < b * pw + 3)) continue;
+        if (!free(x)) continue;
         g.fillStyle = i % 2 ? 'rgba(255,255,255,.95)' : light ? 'rgba(240,106,168,1)' : 'rgba(190,96,140,1)';
         g.beginPath(); g.arc(x, y, Math.max(1.2, pw * 0.032), 0, Math.PI * 2); g.fill();
       }
@@ -629,28 +677,75 @@ function paintPlot(
   }
 
   const rows = 6;
-  for (const [a, b] of spans) {
+  const rowY = (j: number) => ph * 0.24 + (j * ph * 0.7) / rows;
+  const edges = (sx: number, ex: number) => {
+    g.strokeStyle = ink;
+    g.lineWidth = 0.8;
+    g.beginPath(); g.moveTo(sx, 0); g.lineTo(sx, ph); g.moveTo(ex, 0); g.lineTo(ex, ph); g.stroke();
+  };
+
+  // 赶集：地没动，压出一条土车道，两道车辙
+  for (const [a, b] of work.meet) {
+    const sx = a * pw, ex = b * pw, w = ex - sx;
+    g.fillStyle = rgba(pal.path, 1);
+    g.fillRect(sx, 0, w, ph);
+    g.strokeStyle = rgba(pal.rut, 1);
+    g.lineWidth = 1.2;
+    g.setLineDash([3, 2]);
+    for (const t of w > 8 ? [0.3, 0.7] : [0.5]) { g.beginPath(); g.moveTo(sx + w * t, 0); g.lineTo(sx + w * t, ph); g.stroke(); }
+    g.setLineDash([]);
+    edges(sx, ex);
+  }
+
+  // 播种：撒下白种子；两周后才冒芽，再长成青苗，三周多开出向日葵
+  const ls = past ? learnStageOf(age) : 0;
+  for (const [a, b] of work.learn) {
+    const sx = a * pw, ex = b * pw;
+    g.fillStyle = rgba(ls <= 1 ? pal.soil : pal.young, 1);
+    g.fillRect(sx, 0, ex - sx, ph);
+    for (let j = 0; j < rows; j++) {
+      const y = rowY(j);
+      if (ls === 0) {
+        g.fillStyle = rgba(pal.seed, 1);
+        for (let x = sx + 2; x < ex - 1; x += 4) g.fillRect(x, y, 1.4, 1.4);
+      } else if (ls <= 2) {
+        leaves(g, sx, ex, y, ls === 1 ? 0.55 : 1, pal);
+      }
+    }
+    if (ls === 3) {
+      // 向日葵：一圈黄花瓣，棕色的心
+      const fr = Math.max(2.4, pw * 0.07);
+      for (let j = 0; j < 3; j++) {
+        const y = ph * 0.32 + j * ph * 0.24;
+        for (let x = sx + fr + 1 + (j % 2) * fr; x < ex - fr * 0.6; x += fr * 2.6) {
+          g.fillStyle = rgba(pal.yellow, 1);
+          for (let k = 0; k < 8; k++) {
+            const t = (k / 8) * Math.PI * 2;
+            g.beginPath(); g.ellipse(x + Math.cos(t) * fr * 0.7, y + Math.sin(t) * fr * 0.7, fr * 0.42, fr * 0.2, t, 0, Math.PI * 2); g.fill();
+          }
+          g.fillStyle = rgba(pal.soil, 1);
+          g.beginPath(); g.arc(x, y, fr * 0.42, 0, Math.PI * 2); g.fill();
+        }
+      }
+    }
+    edges(sx, ex);
+  }
+
+  // 耕地：今天是红土黄垄，撒了种的是白点，过几天冒芽、长成青苗，两周左右熟成金黄
+  const st = when === 'today' ? -1 : past ? stageOf(age) : -1;
+  for (const [a, b] of work.focus) {
     const sx = a * pw, ex = b * pw;
     const tilled = st <= 0;
     g.fillStyle = rgba(tilled ? pal.soil : st <= 2 ? pal.young : st === 3 ? pal.ripen : pal.ripe, 1);
     g.fillRect(sx, 0, ex - sx, ph);
     for (let j = 0; j < rows; j++) {
-      const y = ph * 0.24 + (j * ph * 0.7) / rows;
+      const y = rowY(j);
       if (tilled) {
-        // 今天、昨天：一道道垄（今天是黄垄，撒了种的是白点）
-        g.fillStyle = rgba(st === 0 && !today ? pal.seed : pal.furrow, 1);
-        const dot = st === 0 && !today;
+        const dot = st === 0;
+        g.fillStyle = rgba(dot ? pal.seed : pal.furrow, 1);
         for (let x = sx + 2; x < ex - 1; x += 4) g.fillRect(x, y, dot ? 1.4 : 2.4, dot ? 1.4 : 1.3);
       } else if (st <= 2) {
-        // 芽和苗：一对对叶子
-        g.fillStyle = rgba(pal.leaf, 1);
-        const k = st === 1 ? 0.6 : 1;
-        for (let x = sx + 2.5; x < ex - 1; x += 5) {
-          g.beginPath();
-          g.ellipse(x - 1.2 * k, y, 1.8 * k, 0.9 * k, -0.6, 0, Math.PI * 2);
-          g.ellipse(x + 1.2 * k, y, 1.8 * k, 0.9 * k, 0.6, 0, Math.PI * 2);
-          g.fill();
-        }
+        leaves(g, sx, ex, y, st === 1 ? 0.6 : 1, pal);
       } else {
         // 穗子：一排排人字
         g.strokeStyle = rgba(pal.ear, 1);
@@ -660,9 +755,21 @@ function paintPlot(
         }
       }
     }
-    g.strokeStyle = ink;
-    g.lineWidth = 0.8;
-    g.beginPath(); g.moveTo(sx, 0); g.lineTo(sx, ph); g.moveTo(ex, 0); g.lineTo(ex, ph); g.stroke();
+    edges(sx, ex);
+  }
+
+  // 浇树：习惯一般很短，不占一条地，只在那个钟点留一滴水
+  for (const [a, b] of work.habit) {
+    const x = ((a + b) / 2) * pw, y = ph * 0.6, q = Math.max(3, pw * 0.08);
+    g.fillStyle = rgba(mixc(pal.water, [255, 255, 255], 0.35), 1);
+    g.beginPath(); g.ellipse(x, y + q * 1.1, q * 1.1, q * 0.35, 0, 0, Math.PI * 2); g.fill();
+    g.beginPath();
+    g.moveTo(x, y - q * 1.3);
+    g.bezierCurveTo(x + q * 0.9, y - q * 0.2, x + q * 0.7, y + q * 0.7, x, y + q * 0.7);
+    g.bezierCurveTo(x - q * 0.7, y + q * 0.7, x - q * 0.9, y - q * 0.2, x, y - q * 1.3);
+    g.fillStyle = rgba(pal.water, 1);
+    g.fill();
+    g.strokeStyle = ink; g.lineWidth = 1; g.stroke();
   }
   g.restore();
 
@@ -680,6 +787,7 @@ function paintPlot(
   const tw = Math.max(br * 2, g.measureText(text).width + br * 0.8);
   g.beginPath();
   if (g.roundRect) g.roundRect(2, 2, tw, br * 2, br); else g.rect(2, 2, tw, br * 2);
+  const today = when === 'today';
   g.fillStyle = today ? rgba(pal.red, 1) : rgba(pal.badge, 1);
   g.fill();
   g.lineWidth = 1;
@@ -691,9 +799,69 @@ function paintPlot(
   g.fillText(text, 2 + tw / 2, 2 + br + 0.5);
 }
 
+/** 一排成对的叶子（芽和苗） */
+function leaves(g: CanvasRenderingContext2D, sx: number, ex: number, y: number, k: number, pal: Pal) {
+  g.fillStyle = rgba(pal.leaf, 1);
+  for (let x = sx + 2.5; x < ex - 1; x += 5) {
+    g.beginPath();
+    g.ellipse(x - 1.2 * k, y, 1.8 * k, 0.9 * k, -0.6, 0, Math.PI * 2);
+    g.ellipse(x + 1.2 * k, y, 1.8 * k, 0.9 * k, 0.6, 0, Math.PI * 2);
+    g.fill();
+  }
+}
+
+/** 一天的农活写成一串，做缓存的键 */
+function workKey(w: Work): string {
+  return (Object.keys(w) as Kind[]).map(k => w[k].map(s => s.map(v => v.toFixed(3)).join('-')).join(',')).join('/');
+}
+
 /* ---------- 点景 ---------- */
 
-/** 棒棒糖似的树：一根树干，一团圆冠，冠上一圈黄叶纹、中心一点红 */
+/** 果树：树苗两片叶子，小树一团小冠，大树满冠，开花点满粉白的花，结果挂满红果 */
+function fruitTree(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, stage: number, pal: Pal) {
+  const ink = rgba(pal.ink, 1);
+  ctx.strokeStyle = ink;
+  ctx.lineWidth = 1.4;
+  // 树下一小圈浇过水的湿土
+  ctx.fillStyle = rgba(mixc(pal.path, pal.soil, 0.45), 1);
+  ctx.beginPath(); ctx.ellipse(x, y, s * 0.22, s * 0.06, 0, 0, Math.PI * 2); ctx.fill();
+  if (stage === 0) {
+    ctx.strokeStyle = rgba(pal.trunk, 1); ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - s * 0.3); ctx.stroke();
+    ctx.fillStyle = rgba(pal.leaf, 1); ctx.strokeStyle = ink; ctx.lineWidth = 1;
+    for (const k of [-1, 1]) { ctx.beginPath(); ctx.ellipse(x + k * s * 0.07, y - s * 0.3, s * 0.08, s * 0.035, k * -0.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+    return;
+  }
+  const trunk = stage === 1 ? 0.32 : 0.45, cr = stage === 1 ? 0.18 : 0.3;
+  ctx.fillStyle = rgba(pal.trunk, 1);
+  ctx.fillRect(x - s * 0.035, y - s * trunk, s * 0.07, s * trunk);
+  ctx.strokeRect(x - s * 0.035, y - s * trunk, s * 0.07, s * trunk);
+  const cy = y - s * (trunk + cr * 0.8);
+  ctx.fillStyle = rgba(pal.young, 1);
+  ctx.beginPath(); ctx.arc(x, cy, s * cr, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = rgba(pal.leaf, 1);
+  const r = rng(Math.round(x));
+  for (let i = 0; i < (stage === 1 ? 4 : 9); i++) {
+    const t = r() * Math.PI * 2, d = r() * cr * 0.7;
+    ctx.beginPath(); ctx.ellipse(x + Math.cos(t) * s * d, cy + Math.sin(t) * s * d, s * 0.05, s * 0.025, t, 0, Math.PI * 2); ctx.fill();
+  }
+  if (stage >= 3) {
+    for (let i = 0; i < 9; i++) {
+      const t = (i / 9) * Math.PI * 2 + 0.3, d = (i % 3 === 0 ? 0.25 : 0.62) * cr;
+      const fx = x + Math.cos(t) * s * d, fy = cy + Math.sin(t) * s * d;
+      if (stage === 3) {
+        ctx.fillStyle = i % 2 ? 'rgba(255,255,255,1)' : 'rgba(246,150,190,1)';
+        ctx.beginPath(); ctx.arc(fx, fy, s * 0.032, 0, Math.PI * 2); ctx.fill();
+      } else {
+        ctx.fillStyle = rgba(pal.red, 1);
+        ctx.beginPath(); ctx.arc(fx, fy, s * 0.042, 0, Math.PI * 2); ctx.fill();
+        ctx.lineWidth = 0.9; ctx.stroke();
+      }
+    }
+  }
+}
+
+/** 棒棒糖似的树：一根树干，一团圆冠，冠上一圈浅绿的叶纹（不开花不结果，和果园的果树分得开） */
 function folkTree(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, pal: Pal) {
   ctx.strokeStyle = rgba(pal.ink, 1);
   ctx.lineWidth = 1.5;
@@ -702,13 +870,12 @@ function folkTree(ctx: CanvasRenderingContext2D, x: number, y: number, s: number
   ctx.strokeRect(x - s * 0.04, y - s * 0.45, s * 0.08, s * 0.45);
   ctx.fillStyle = rgba(pal.crown, 1);
   ctx.beginPath(); ctx.arc(x, y - s * 0.7, s * 0.3, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = rgba(pal.yellow, 1);
+  ctx.fillStyle = rgba(pal.dot, 1);
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * Math.PI * 2;
     ctx.beginPath(); ctx.ellipse(x + Math.cos(a) * s * 0.18, y - s * 0.7 + Math.sin(a) * s * 0.18, s * 0.065, s * 0.032, a, 0, Math.PI * 2); ctx.fill();
   }
-  ctx.fillStyle = rgba(pal.red, 1);
-  ctx.beginPath(); ctx.arc(x, y - s * 0.7, s * 0.045, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x, y - s * 0.7, s * 0.05, 0, Math.PI * 2); ctx.fill();
 }
 
 /** 草垛：一个黄圆顶，几道横纹 */
@@ -819,25 +986,29 @@ function tag(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: 
   ctx.stroke();
 }
 
-/** 农夫：黄斗笠、红褂子、蓝裤子。walk 扛着锄头站着，hoe 弯腰锄地，sit 坐在小凳上 */
-function folkFarmer(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, pose: 'walk' | 'hoe' | 'sit', pal: Pal) {
+/**
+ * 农夫：黄斗笠、红褂子、蓝裤子。walk 扛着锄头站着，hoe 弯腰锄地，sow 挎着篮子撒种，
+ * water 提一桶水，sit 坐在小凳上
+ */
+function folkFarmer(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, pose: 'walk' | 'hoe' | 'sow' | 'water' | 'sit', pal: Pal) {
   const ink = rgba(pal.ink, 1);
   ctx.save();
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   const hoe = pose === 'hoe', sit = pose === 'sit';
   const lean = hoe ? 0.22 : 0;
-  // 锄头
+  // 锄头（撒种、提水时手上不拿）
+  const tool = pose !== 'sow' && pose !== 'water';
   ctx.strokeStyle = 'rgba(122,74,30,1)';
   ctx.lineWidth = Math.max(1.4, s * 0.04);
   ctx.beginPath();
   if (hoe) { ctx.moveTo(x - s * 0.02, y - s * 0.56); ctx.lineTo(x + s * 0.44, y - s * 0.02); }
   else if (sit) { ctx.moveTo(x + s * 0.32, y); ctx.lineTo(x + s * 0.2, y - s * 0.75); }
-  else { ctx.moveTo(x - s * 0.25, y - s * 0.75); ctx.lineTo(x + s * 0.3, y - s * 0.38); }
+  else if (tool) { ctx.moveTo(x - s * 0.25, y - s * 0.75); ctx.lineTo(x + s * 0.3, y - s * 0.38); }
   ctx.stroke();
   ctx.fillStyle = 'rgba(154,160,166,1)';
   if (hoe) ctx.fillRect(x + s * 0.38, y - s * 0.06, s * 0.16, s * 0.08);
-  else if (!sit) ctx.fillRect(x - s * 0.32, y - s * 0.8, s * 0.1, s * 0.14);
+  else if (tool && !sit) ctx.fillRect(x - s * 0.32, y - s * 0.8, s * 0.1, s * 0.14);
   // 小凳
   if (sit) {
     ctx.fillStyle = 'rgba(122,74,30,1)';
@@ -864,38 +1035,80 @@ function folkFarmer(ctx: CanvasRenderingContext2D, x: number, y: number, s: numb
   ctx.fillStyle = rgba(pal.yellow, 1);
   ctx.beginPath(); ctx.moveTo(hx - s * 0.22, hy - s * 0.02); ctx.lineTo(hx, hy - s * 0.2); ctx.lineTo(hx + s * 0.22, hy - s * 0.02); ctx.closePath();
   ctx.fill(); ctx.stroke();
+
+  // 撒种：一只手往前伸，撒出一道白点，腰间挎个篮子
+  if (pose === 'sow') {
+    ctx.strokeStyle = rgba(pal.red, 1); ctx.lineWidth = Math.max(2, s * 0.06);
+    ctx.beginPath(); ctx.moveTo(x + s * 0.05, by - s * 0.08); ctx.lineTo(x + s * 0.3, by - s * 0.14); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,248,220,1)';
+    for (let i = 0; i < 6; i++) {
+      const t = i / 5;
+      ctx.beginPath(); ctx.arc(x + s * (0.36 + 0.2 * t), by - s * 0.12 + s * 0.5 * t * t, Math.max(1, s * 0.025), 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.fillStyle = 'rgba(201,161,91,1)'; ctx.strokeStyle = ink; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.ellipse(x - s * 0.17, by + s * 0.12, s * 0.11, s * 0.07, 0, 0, Math.PI); ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+  // 提水：一只手垂下，提一只木桶，桶里是蓝水
+  if (pose === 'water') {
+    ctx.strokeStyle = rgba(pal.red, 1); ctx.lineWidth = Math.max(2, s * 0.06);
+    ctx.beginPath(); ctx.moveTo(x + s * 0.06, by - s * 0.06); ctx.lineTo(x + s * 0.2, by + s * 0.12); ctx.stroke();
+    const bx = x + s * 0.24, bt = by + s * 0.14, bw = s * 0.14, bh = s * 0.14;
+    ctx.strokeStyle = ink; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(bx, bt, bw * 0.5, Math.PI, 0); ctx.stroke();
+    ctx.fillStyle = 'rgba(160,110,60,1)';
+    ctx.beginPath(); ctx.moveTo(bx - bw * 0.5, bt); ctx.lineTo(bx + bw * 0.5, bt); ctx.lineTo(bx + bw * 0.4, bt + bh); ctx.lineTo(bx - bw * 0.4, bt + bh); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = rgba(pal.water, 1);
+    ctx.beginPath(); ctx.ellipse(bx, bt, bw * 0.45, bw * 0.12, 0, 0, Math.PI * 2); ctx.fill();
+  }
   ctx.restore();
 }
 
 /**
- * 每天翻过的地：日程占着、而且已经过去的时段（到 nowH 为止），换成地里横向的几段（0–1）。
- * 叠在一起的只算一次；全天日程不算；跨午夜的拆到两天里。
+ * 每天做过的农活：日程占着、而且已经过去的时段（到 nowH 为止），按类型换成地里横向的几段（0–1）。
+ * 同一类型叠在一起的只算一次；全天日程不算；跨午夜的拆到两天里。
  */
-function tillage(events: EventView[], nowH: number): Map<number, Spans> {
-  const raw = new Map<number, Spans>();
+function tillage(events: EventView[], nowH: number): Map<number, Work> {
+  const raw = new Map<number, Work>();
   for (const ev of events) {
     if (isAllDay(ev.start, ev.end)) continue;
     const s = localHours(ev.start), e = Math.min(localHours(ev.end), nowH);
     if (e <= s) continue;
+    const kind = kindOf(ev);
     for (let d = dayOf(s); d * 24 < e; d++) {
       const a = uIn(Math.max(s, d * 24) - d * 24), b = uIn(Math.min(e, (d + 1) * 24) - d * 24);
-      if (b - a < 1e-3) continue;
-      let list = raw.get(d);
-      if (!list) raw.set(d, (list = []));
-      list.push([a, b]);
+      // 浇树只留一滴水，再短也要记下；别的农活太短（夜里挤在两头）就不画
+      if (b - a < 1e-3 && kind !== 'habit') continue;
+      let work = raw.get(d);
+      if (!work) raw.set(d, (work = { focus: [], learn: [], meet: [], habit: [] }));
+      work[kind].push([a, b]);
     }
   }
-  for (const [d, list] of raw) {
-    list.sort((p, q) => p[0] - q[0]);
-    const merged: Spans = [];
-    for (const [a, b] of list) {
-      const last = merged[merged.length - 1];
-      if (last && a <= last[1]) last[1] = Math.max(last[1], b);
-      else merged.push([a, b]);
+  for (const work of raw.values()) {
+    for (const k of Object.keys(work) as Kind[]) {
+      const list = work[k].sort((p, q) => p[0] - q[0]);
+      const merged: Spans = [];
+      for (const [a, b] of list) {
+        const last = merged[merged.length - 1];
+        if (last && a <= last[1]) last[1] = Math.max(last[1], b);
+        else merged.push([a, b]);
+      }
+      work[k] = merged;
     }
-    raw.set(d, merged);
   }
   return raw;
+}
+
+/** 果园：每种习惯（按标题）一棵树，按近两个月做完了几次长大；浇得多的排前面 */
+function orchardOf(events: EventView[], now: number): Orchard[] {
+  const times = new Map<string, number>();
+  for (const ev of events) {
+    if (ev.state !== 'ended' || ev.end < now - 60 * DAY || kindOf(ev) !== 'habit') continue;
+    const t = ev.title.trim();
+    times.set(t, (times.get(t) ?? 0) + 1);
+  }
+  return [...times].map(([title, n]) => ({ title, times: n, stage: TREE_AT.filter(k => n >= k).length - 1 }))
+    .sort((a, b) => b.times - a.times || a.title.localeCompare(b.title));
 }
 
 /** 第 d 天的中午（毫秒），用来取日期 */

@@ -17,7 +17,7 @@ export interface Store {
   all(): Promise<CalEvent[]>;
   put(ev: CalEvent): Promise<void>;
   remove(id: string): Promise<void>;
-  /** 导入：同一个 id 的覆盖，但保留已经写下的准备事项和结论。返回新加了几条、更新了几条 */
+  /** 导入：同一个 id 的覆盖，但保留已经写下的准备事项、结论和自己选的类型。返回新加了几条、更新了几条 */
   importMany(evs: CalEvent[]): Promise<{ added: number; updated: number }>;
   /** 登山的目标；没设时为 null */
   goal(): Promise<Goal | null>;
@@ -29,6 +29,7 @@ function merge(ev: CalEvent, old: CalEvent | undefined): CalEvent {
   const next = { ...ev };
   if (old.prep) next.prep = old.prep;
   if (old.outcome) next.outcome = old.outcome;
+  if (old.kind) next.kind = old.kind;
   return next;
 }
 

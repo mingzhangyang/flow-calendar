@@ -103,6 +103,7 @@ body { overflow: hidden; -webkit-font-smoothing: antialiased; overscroll-behavio
 .sheet p { margin: 0; }
 .sheet .state { color: var(--accent); font-size: 13px; font-weight: 600; margin-bottom: 4px; }
 .sheet .when { color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.sheet .kind { color: var(--ink-soft); font-size: 13px; margin-top: 2px; }
 .sheet .notes { margin-top: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .sheet .actions { display: flex; gap: 8px; margin-top: 20px; }
 .sheet .grow { flex: 1; }
@@ -113,10 +114,10 @@ body { overflow: hidden; -webkit-font-smoothing: antialiased; overscroll-behavio
 .sheet button.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
 .sheet button.del { color: var(--ink-soft); }
 .sheet button.danger { background: #B4371F; border-color: #B4371F; color: #FFF6EA; }
-.sheet button:focus-visible, .sheet input:focus-visible, .sheet textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.sheet button:focus-visible, .sheet input:focus-visible, .sheet textarea:focus-visible, .sheet select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .form h2 { margin-bottom: 12px; }
 .form label { display: block; margin-bottom: 12px; color: var(--ink-soft); font-size: 13px; }
-.form input, .form textarea {
+.form input, .form textarea, .form select {
   display: block; width: 100%; margin-top: 4px; padding: 9px 10px;
   border: 1px solid var(--line); border-radius: 8px;
   background: rgba(127, 127, 127, .08); color: var(--ink);

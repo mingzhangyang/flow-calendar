@@ -9,7 +9,12 @@ export interface CalEvent {
   prep?: PrepItem[];
   /** 结束后写下的一两句结论；写了就成了一条记录 */
   outcome?: string;
+  /** 自己选的类型；没选时按标题猜（见 kind.ts） */
+  kind?: Kind;
 }
+
+/** 日程的类型：专注、学习、会议、习惯。各个世界按它换比喻（农场：耕地、播种、赶集、浇树） */
+export type Kind = 'focus' | 'learn' | 'meet' | 'habit';
 
 export interface PrepItem {
   text: string;

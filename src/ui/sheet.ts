@@ -2,6 +2,7 @@ import type { CalEvent, PrepItem } from '../model/types';
 import { prepLeft, stateOf } from '../model/states';
 import { DAY, HOUR, MINUTE, fmtDay, fmtTime, isAllDay, startOfDay } from '../model/time';
 import { type Store, newId } from '../data/store';
+import { KIND_NAMES, guessKind, kindOf } from '../model/kind';
 
 /**
  * 日程的详情和编辑表单，放在同一个 <dialog> 里。
@@ -42,6 +43,8 @@ export class Sheet {
       if (this.current) this.showDetail(this.current); else this.dlg.close();
     });
     this.form.addEventListener('submit', e => { e.preventDefault(); this.save(); });
+    // “按标题猜”后面跟着写出现在猜的是什么
+    this.form.querySelector('input[name="title"]')!.addEventListener('input', () => this.showGuess());
     // 点面板外面的暗处关掉
     this.dlg.addEventListener('click', e => { if (e.target === this.dlg) this.dlg.close(); });
   }
@@ -79,6 +82,7 @@ export class Sheet {
     this.dlg.setAttribute('aria-label', `日程：${ev.title}`);
     this.text('.detail .title', ev.title);
     this.text('.detail .when', fmtWhen(ev.start, ev.end));
+    this.text('.detail .kind', `类型：${KIND_NAMES[kindOf(ev)]}${ev.kind ? '' : '（按标题猜的）'}`);
     this.text('.detail .state', stateText(ev, Date.now()));
     const notes = this.dlg.querySelector('.detail .notes') as HTMLElement;
     notes.textContent = ev.notes ?? '';
@@ -154,9 +158,16 @@ export class Sheet {
     this.outcomeBtn.focus();
   }
 
+  private showGuess() {
+    const f = this.form.elements as unknown as Record<'title', HTMLInputElement> & Record<'kind', HTMLSelectElement>;
+    f.kind.options[0].textContent = `按标题猜（${KIND_NAMES[guessKind(f.title.value.trim())]}）`;
+  }
+
   private showForm(ev: CalEvent) {
-    const f = this.form.elements as unknown as Record<'title' | 'date' | 'start' | 'end' | 'notes' | 'prep', HTMLInputElement>;
+    const f = this.form.elements as unknown as Record<'title' | 'date' | 'start' | 'end' | 'notes' | 'prep', HTMLInputElement> & Record<'kind', HTMLSelectElement>;
     f.title.value = ev.title;
+    f.kind.value = ev.kind ?? '';
+    this.showGuess();
     f.prep.value = (ev.prep ?? []).map(p => p.text).join('\n');
     f.date.value = dateValue(ev.start);
     f.start.value = timeValue(ev.start);
@@ -171,7 +182,7 @@ export class Sheet {
   }
 
   private async save() {
-    const f = this.form.elements as unknown as Record<'title' | 'date' | 'start' | 'end' | 'notes' | 'prep', HTMLInputElement>;
+    const f = this.form.elements as unknown as Record<'title' | 'date' | 'start' | 'end' | 'notes' | 'prep', HTMLInputElement> & Record<'kind', HTMLSelectElement>;
     const title = f.title.value.trim();
     const start = parseLocal(f.date.value, f.start.value);
     let end = parseLocal(f.date.value, f.end.value);
@@ -189,6 +200,7 @@ export class Sheet {
     const notes = f.notes.value.trim();
     const ev: CalEvent = { id: this.current?.id || newId(), title, start: start!, end: end! };
     if (notes) ev.notes = notes;
+    if (f.kind.value) ev.kind = f.kind.value as CalEvent['kind'];
     const prep = parsePrep(f.prep.value, this.current?.prep);
     if (prep.length) ev.prep = prep;
     if (this.current?.outcome) ev.outcome = this.current.outcome;
