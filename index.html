@@ -16,6 +16,7 @@
   <div id="modes" class="modes" role="group" aria-label="模式">
     <button type="button" data-mode="hike" aria-pressed="true">远足</button>
     <button type="button" data-mode="climb" aria-pressed="false">登山</button>
+    <button type="button" data-mode="farm" aria-pressed="false">农场</button>
   </div>
   <button id="goal-btn" class="goal-btn" type="button" hidden>设目标</button>
   <button id="open-list" class="open-list" type="button">列表</button>
@@ -45,6 +46,7 @@
     <p class="state"></p>
     <h2 class="title"></h2>
     <p class="when"></p>
+    <p class="kind"></p>
     <p class="notes"></p>
     <div class="prep" hidden>
       <h3>准备事项</h3>
@@ -66,6 +68,13 @@
   <form class="form" hidden novalidate>
     <h2 class="form-title">新建日程</h2>
     <label>标题<input name="title" maxlength="100" autocomplete="off" enterkeyhint="done"></label>
+    <label>类型<select name="kind">
+      <option value="">按标题猜</option>
+      <option value="focus">专注</option>
+      <option value="learn">学习</option>
+      <option value="meet">会议</option>
+      <option value="habit">习惯</option>
+    </select></label>
     <label>日期<input name="date" type="date"></label>
     <div class="row">
       <label>开始<input name="start" type="time"></label>

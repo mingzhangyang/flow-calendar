@@ -11,6 +11,7 @@ import { type Theme, themeAt } from './model/daylight';
 import { type World, GOAL_HIT } from './worlds/world';
 import { HikeWorld } from './worlds/hike';
 import { ClimbWorld, summitOf } from './worlds/climb';
+import { FarmWorld } from './worlds/farm';
 
 const canvas = document.getElementById('world') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
@@ -26,6 +27,7 @@ motionQuery.addEventListener('change', () => { viewport.reducedMotion = motionQu
 const WORLDS: Record<string, () => World> = {
   hike: () => new HikeWorld(() => requestRender()),
   climb: () => new ClimbWorld(() => requestRender()),
+  farm: () => new FarmWorld(() => requestRender()),
 };
 const made = new Map<string, World>();
 let world: World = useWorld(readMode());
@@ -136,8 +138,8 @@ function openGoal() {
 }
 document.getElementById('goal-btn')!.addEventListener('click', openGoal);
 
-/* ---------- 回望（登山） ----------
- * 拉远看整座山。拉远时视角先回到“现在”，期间不能拖。
+/* ---------- 回望（登山、农场） ----------
+ * 拉远看全貌（登山是整座山，农场是两块田拉长成五周）。拉远时视角先回到“现在”，期间不能拖。
  */
 let overview = false;
 const overviewBtn = document.getElementById('overview') as HTMLButtonElement;
@@ -366,12 +368,12 @@ function describe(f: Frame) {
   text += world.describe?.(f) ?? '';
   if (overview) {
     // 回望时不能拖、方向键也不动，说明要和实际一致
-    text += '正在回望整座山，这时不能拖动。按 Esc 或左下角的“回到眼前”回来。';
+    text += '正在回望，这时不能拖动。按 Esc 或左下角的“回到眼前”回来。';
   } else {
     text += world.id === 'climb' ? '左右或上下拖动' : '上下拖动';
     text += '可以去看未来或回看过去，方向键按小时移动，Home 键回到现在。';
   }
-  text += '右上角的“列表”按钮可以按列表查看和搜索全部日程，左上角可以切换远足和登山两种模式。';
+  text += '右上角的“列表”按钮可以按列表查看和搜索全部日程，左上角可以切换远足、登山、农场三种模式。';
   if (text !== lastDescription) {
     canvas.setAttribute('aria-label', text);
     lastDescription = text;

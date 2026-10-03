@@ -6,7 +6,7 @@ import { DAY } from '../model/time';
  * 读 .ics 文件（Google 日历、苹果日历、Outlook 导出的都行），换成日程。
  *
  * - 文件里带的时区（VTIMEZONE）先登记，时间按各自的时区换算；没有时区的按本地时间。
- * - 重复日程（RRULE）展开成一次次的日程，只展开往回 30 天到往后一年；
+ * - 重复日程（RRULE）展开成一次次的日程，只展开往回 60 天到往后一年；
  *   跳过的日期（EXDATE）不要，单独改过的那一次（RECURRENCE-ID）用改过的样子，取消的不要。
  * - 全天日程：从当天零点到第二天零点。
  * - id 由 UID 和这一次的开始时间决定，同一个文件再导入一次只会覆盖，不会重复。
@@ -19,7 +19,7 @@ export interface IcsResult {
   dropped: number;
 }
 
-const BACK = 30 * DAY;
+const BACK = 60 * DAY;
 const AHEAD = 365 * DAY;
 /** 一个重复日程最多展开多少次；整个文件最多多少条 */
 const PER_SERIES = 1000;
