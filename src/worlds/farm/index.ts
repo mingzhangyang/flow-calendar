@@ -97,7 +97,7 @@ function skyAt(hod: number): RGB {
 
 
 /** 能点的东西：x 是中线，y 是下沿 */
-interface Hit { id: string; x: number; y: number; w: number; h: number }
+interface Hit { id: string; x: number; y: number; w: number; h: number; strict?: boolean }
 /** 种在田里的两类：麦田是专注，菜园是学习 */
 type FieldKind = 'focus' | 'learn';
 /** 一垄里的一段：一个日程在这天占几小时（叠在前面日程上的部分不算），已经做了几小时 */
@@ -107,7 +107,7 @@ interface Seg { ev: EventView; hours: number; done: number }
 const dayOf = (h: number) => Math.floor(h / 24);
 
 /** 麦子长到哪一步：0 种子 1 冒芽 2 青苗 3 转黄 4 熟了（age：那天过去了几天） */
-const stageOf = (age: number) => (age < 1 ? 0 : age < 3 ? 1 : age < 8 ? 2 : age < 15 ? 3 : 4);
+const stageOf = (age: number) => (age < 1 ? 0 : age < 3 ? 1 : age < 8 ? 2 : age < 13 ? 3 : 4);
 /** 菜园长到哪一步：0 种子（两周不见动静）1 冒芽 2 青苗 3 开花 */
 const learnStageOf = (age: number) => (age < 14 ? 0 : age < 18 ? 1 : age < 24 ? 2 : 3);
 
@@ -256,6 +256,7 @@ export class FarmWorld implements World {
     for (const loose of [false, true]) {
       for (let i = this.hits.length - 1; i >= 0; i--) {
         const h = this.hits[i];
+        if (loose && h.strict) continue;
         const w = loose ? Math.max(h.w, 16) : h.w, hh = loose ? Math.max(h.h, 18) : h.h;
         const bottom = h.y - (h.h - hh) / 2 + (loose ? 4 : 0);
         if (Math.abs(x - h.x) <= w / 2 && y <= bottom && y >= bottom - hh - (loose ? 4 : 0)) return h.id;
@@ -484,52 +485,89 @@ export class FarmWorld implements World {
    */
   private drawMarket(ctx: CanvasRenderingContext2D, events: EventView[], now: number, live: EventView | undefined, pal: Pal, light: boolean) {
     const { X0, FW, W } = this;
-    const top = this.mTop, bottom = this.mBottom;
-    sign(ctx, X0 + 8, top + 4, '集市 · 会议', pal);
-    const ry = top + clamp((bottom - top) * 0.46, 24, 30), rh = clamp((bottom - top) * 0.36, 20, 50);
-    ctx.fillStyle = rgba(pal.path, 1);
-    ctx.fillRect(0, ry, W, rh);
-    ctx.fillStyle = rgba(pal.ink, 1);
-    ctx.fillRect(0, ry - 1, W, 1.6); ctx.fillRect(0, ry + rh, W, 1.6);
-    ctx.strokeStyle = rgba(pal.rut, 1); ctx.lineWidth = 1.4; ctx.setLineDash([5, 4]);
-    for (const t of [0.35, 0.7]) { ctx.beginPath(); ctx.moveTo(0, ry + rh * t); ctx.lineTo(W, ry + rh * t); ctx.stroke(); }
-    ctx.setLineDash([]);
-    const ground = ry + rh * 0.78;
+    const top = this.mTop, bottom = this.mBottom, bandH = bottom - top;
+    if (!(bandH > 0)) return;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, top, W, bandH); ctx.clip();
 
-    // 两个摊子；开会时农夫站在右边那个旁边
-    const ss = clamp(rh * 1.15, 36, 58);
+    // 矮屏先留出摊位；车、仓房和说明字只在有空间时出现。
+    const roadOffset = Math.min(24, bandH * 0.32);
+    const belowSpace = Math.min(13, bandH * 0.18);
+    const rh = Math.max(0, Math.min(clamp(bandH * 0.36, 20, 50), bandH - roadOffset - belowSpace));
+    const ry = top + roadOffset;
+    if (rh > 0) {
+      ctx.fillStyle = rgba(pal.path, 1);
+      ctx.fillRect(0, ry, W, rh);
+      ctx.fillStyle = rgba(pal.ink, 1);
+      ctx.fillRect(0, ry - 1, W, 1.6); ctx.fillRect(0, ry + rh, W, 1.6);
+      ctx.strokeStyle = rgba(pal.rut, 1); ctx.lineWidth = 1.4; ctx.setLineDash([5, 4]);
+      for (const t of [0.35, 0.7]) { ctx.beginPath(); ctx.moveTo(0, ry + rh * t); ctx.lineTo(W, ry + rh * t); ctx.stroke(); }
+      ctx.setLineDash([]);
+    }
+    const ground = ry + rh * 0.78;
+    const ss = Math.min(clamp(rh * 1.15, 36, 58), Math.max(0, (ground - top - 2) / 0.95));
     const s1 = X0 + FW * 0.44, s2 = X0 + FW * 0.6;
-    stall(ctx, s1, ground, ss, pal);
-    const top2 = stall(ctx, s2, ground, ss, pal);
+    let stallTop = ground;
+    if (ss >= 4) {
+      stall(ctx, s1, ground, ss, pal);
+      stallTop = stall(ctx, s2, ground, ss, pal);
+    }
     this.stallSpot = { x: s2 + ss * 0.62, y: ground + 2 };
     const liveMeet = live && kindOf(live) === 'meet' ? live : null;
-    if (liveMeet) this.hits.push({ id: liveMeet.id, x: s2, y: ground + 4, w: ss, h: ground - top2 + 4 });
-
-    // 集市口：下一次会的车（一天半以内的）
-    const next = events
-      .filter(e => (e.state === 'future' || e.state === 'soon') && kindOf(e) === 'meet' && e.start - now < 36 * HOUR)
-      .sort((a, b) => a.start - b.start)[0];
-    const below = ry + rh + Math.min(13, bottom - ry - rh - 2);
-    if (next) {
-      const cs = clamp(rh * 0.62, 18, 30), cx = X0 + 14 + cs * 0.55;
-      const prep = next.prep ?? [], n = prep.filter(p => p.done).length;
-      cart(ctx, cx, ground, cs, n, prep.length - n, pal);
-      const tail = prep.length ? (n < prep.length ? ` · 还差 ${prep.length - n} 样` : ' · 都装好了') : '';
-      const label = fitText(ctx, `${whenText(next.start, localHours(now))} ${next.title}${tail}`, FW * 0.55, `700 11px ${SANS}`);
-      small(ctx, X0 + 8, below, label, 'left', pal, light);
-      this.hits.push({ id: next.id, x: cx, y: ground + 4, w: Math.max(cs * 1.8, 30), h: cs * 1.4 });
+    const hitTop = Math.max(top, stallTop), hitBottom = Math.min(bottom, ground);
+    if (liveMeet && hitBottom > hitTop && ss >= 4) {
+      this.hits.push({ id: liveMeet.id, x: s2, y: hitBottom, w: ss * 1.2, h: hitBottom - hitTop, strict: true });
     }
 
-    // 仓房：两周来写了结论的会，一篮一篮堆在门口
-    const brought = events
-      .filter(e => e.state === 'ended' && kindOf(e) === 'meet' && e.outcome && e.end > now - 14 * DAY)
-      .sort((a, b) => b.end - a.end);
-    const bs = clamp(rh * 1.3, 44, 64), bx = X0 + FW - bs * 0.62;
-    barn(ctx, bx, ground, bs, brought.length, pal);
-    small(ctx, X0 + FW - 6, below, brought.length ? `两周带回 ${brought.length} 篮` : '会后写了结论，就带回一篮', 'right', pal, light);
-    if (brought.length) this.hits.push({ id: brought[0].id, x: bx, y: ground + 4, w: bs, h: bs });
-  }
+    const below = Math.min(bottom - 2, ry + rh + Math.min(13, Math.max(0, bottom - ry - rh - 2)));
+    const showDetails = bandH >= 64;
+    if (showDetails) {
+      // 集市口：下一次会的车（一天半以内的）
+      const next = events
+        .filter(e => (e.state === 'future' || e.state === 'soon') && kindOf(e) === 'meet' && e.start - now < 36 * HOUR)
+        .sort((a, b) => a.start - b.start)[0];
+      if (next) {
+        const maxCart = Math.max(0, (ground - top - 2) / 1.22);
+        const cs = Math.min(clamp(rh * 0.62, 18, 30), maxCart);
+        if (cs >= 8) {
+          const cx = X0 + 14 + cs * 0.55;
+          const prep = next.prep ?? [], n = prep.filter(p => p.done).length;
+          cart(ctx, cx, ground, cs, n, prep.length - n, pal);
+          const tail = prep.length ? (n < prep.length ? ' · 还差 ' + (prep.length - n) + ' 样' : ' · 都装好了') : '';
+          const label = fitText(ctx, whenText(next.start, localHours(now)) + ' ' + next.title + tail, FW * 0.55, '700 11px ' + SANS);
+          small(ctx, X0 + 8, below, label, 'left', pal, light);
+          const cartTop = Math.max(top, ground - cs * 1.22), cartBottom = Math.min(bottom, ground + 2);
+          if (cartBottom > cartTop) this.hits.push({
+            id: next.id, x: cx, y: cartBottom, w: Math.max(cs * 1.8, 30),
+            h: cartBottom - cartTop, strict: true,
+          });
+        }
+      }
 
+      // 仓房：两周来写了结论的会，一篮一篮堆在门口
+      const brought = events
+        .filter(e => e.state === 'ended' && kindOf(e) === 'meet' && e.outcome && e.end > now - 14 * DAY)
+        .sort((a, b) => b.end - a.end);
+      const maxBarn = Math.max(0, (ground - top - 2) / 0.95);
+      const bs = Math.min(clamp(rh * 1.3, 44, 64), maxBarn), bx = X0 + FW - bs * 0.62;
+      if (bs >= 18) {
+        barn(ctx, bx, ground, bs, brought.length, pal);
+        const barnText = brought.length ? '两周带回 ' + brought.length + ' 篮' : '会后写了结论，就带回一篮';
+        small(ctx, X0 + FW - 6, below, fitText(ctx, barnText, FW * 0.38, '700 11px ' + SANS), 'right', pal, light);
+        if (brought.length) {
+          const barnTop = Math.max(top, ground - bs * 0.95), barnBottom = Math.min(bottom, ground);
+          if (barnBottom > barnTop) this.hits.push({
+            id: brought[0].id, x: bx, y: barnBottom, w: bs * 1.15,
+            h: barnBottom - barnTop, strict: true,
+          });
+        }
+      }
+    }
+
+    // 木牌放在最后，矮屏时也能看清。
+    sign(ctx, X0 + 8, top + 4, '集市 · 会议', pal);
+    ctx.restore();
+  }
   /* ---------- 果园 ---------- */
 
   /**
@@ -542,7 +580,7 @@ export class FarmWorld implements World {
     const ground = this.oBottom - 22;
     this.orchardGround = ground;
     this.treeSpot.clear();
-    let s = clamp(this.oBottom - this.oTop - 50, 24, 104);
+    let s = Math.min(clamp(this.oBottom - this.oTop - 50, 24, 104), Math.max(0, (ground - this.oTop - 2) / 0.7));
     if (!this.orchard.length) {
       small(ctx, X0 + FW / 2, ground - s * 0.4, '有了跑步、冥想这样的习惯，这里就种一棵树', 'center', pal, light);
       return;
@@ -571,7 +609,7 @@ export class FarmWorld implements World {
     }
     let x = X0 + lead(s);
     for (const o of shown) {
-      fruitTree(ctx, x, ground, s, o.stage, pal);
+      if (s >= 8) fruitTree(ctx, x, ground, s, o.stage, pal);
       ctx.font = `700 11px ${SANS}`;
       const name = fitText(ctx, o.title, Math.min(s * 0.9, pitch - 18), `700 11px ${SANS}`);
       const tw = ctx.measureText(name).width + 12;
@@ -580,7 +618,8 @@ export class FarmWorld implements World {
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(name, x, ground + 12);
       this.treeSpot.set(o.title, x);
-      this.hits.push({ id: o.id, x, y: ground + 20, w: Math.min(Math.max(s * 0.7, tw), pitch), h: s + 20 });
+      const hitTop = Math.max(this.oTop, ground - s), hitBottom = Math.min(this.oBottom, ground + 20);
+      if (hitBottom > hitTop) this.hits.push({ id: o.id, x, y: hitBottom, w: Math.min(Math.max(s * 0.7, tw), pitch), h: hitBottom - hitTop, strict: true });
       x += pitch;
     }
     if (shown.length < n) small(ctx, x - pitch + s * 0.3 + 4, ground - s * 0.35, `还有 ${n - shown.length} 种`, 'left', pal, light);
@@ -591,24 +630,32 @@ export class FarmWorld implements World {
   /** 下面一条村子：土路、红瓦房、粮仓、两只鸡。左右两头会被“回望”“新建”按钮压住，房子摆在中间 */
   private drawVillage(ctx: CanvasRenderingContext2D, pal: Pal, daylight: number) {
     const { W, H, VIL } = this;
-    const bh = H - VIL;
+    const villageBottom = H - this.insetBottom;
+    const bh = Math.max(0, villageBottom - VIL);
     ctx.fillStyle = rgba(pal.path, 1);
-    ctx.fillRect(0, VIL, W, bh);
-    const r = rng(12);
-    ctx.fillStyle = rgba(mixc(pal.path, pal.ink, 0.25), 1);
-    for (let i = 0; i < W / 9; i++) { ctx.beginPath(); ctx.arc(r() * W, VIL + 6 + r() * (bh - 8), 0.9 + r() * 0.8, 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillRect(0, VIL, W, H - VIL);
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, VIL, W, bh); ctx.clip();
+    if (bh > 8) {
+      const r = rng(12);
+      ctx.fillStyle = rgba(mixc(pal.path, pal.ink, 0.25), 1);
+      for (let i = 0; i < W / 9; i++) { ctx.beginPath(); ctx.arc(r() * W, VIL + 6 + r() * (bh - 8), 0.9 + r() * 0.8, 0, Math.PI * 2); ctx.fill(); }
+    }
     ctx.fillStyle = rgba(pal.ink, 1);
     ctx.fillRect(0, VIL - 1, W, 2.2);
-    const ground = H - this.insetBottom - bh * 0.14;
-    const s = clamp(bh * 1.05, 56, 92);
+    const ground = villageBottom - bh * 0.14;
+    const maxS = Math.max(0, (ground - VIL - 2) / 0.84);
+    const s = Math.min(clamp(bh * 1.05, 56, 92), maxS);
     const hw = s * 1.15, hx = W / 2 - hw * 0.62;
     this.house = { x: hx, w: hw, ground };
-    house(ctx, hx, ground, hw, s * 0.48, pal, 1 - daylight);
-    granary(ctx, hx + hw + s * 0.42, ground, s * 0.5, pal);
-    hen(ctx, hx - s * 0.3, ground - 2, s * 0.08, pal);
-    hen(ctx, hx - s * 0.62, ground, s * 0.07, pal, true);
+    if (s >= 4) {
+      house(ctx, hx, ground, hw, s * 0.48, pal, 1 - daylight);
+      granary(ctx, hx + hw + s * 0.42, ground, s * 0.5, pal);
+      hen(ctx, hx - s * 0.3, ground - 2, s * 0.08, pal);
+      hen(ctx, hx - s * 0.62, ground, s * 0.07, pal, true);
+    }
+    ctx.restore();
   }
-
   /* ---------- 回望 ---------- */
 
   /** 回望时集市和果园那片换成一座大粮仓和这五周的收成 */
